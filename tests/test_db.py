@@ -130,6 +130,30 @@ def test_mark_stale_devices_inactive_only_affects_matching_sensor(repo):
     assert active == {"bb:bb:bb:bb:bb:bb"}
 
 
+def test_upsert_device_round_trips_service_banners_tls_and_cve_findings(repo):
+    repo.upsert_device(
+        _device(
+            service_banners={22: "SSH-2.0-OpenSSH_8.9p1"},
+            tls_certificates={443: {"subject": "CN=nas.local", "expired": False}},
+            cve_findings={22: [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}]},
+        )
+    )
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["service_banners"] == {22: "SSH-2.0-OpenSSH_8.9p1"}
+    assert device["tls_certificates"] == {443: {"subject": "CN=nas.local", "expired": False}}
+    assert device["cve_findings"] == {22: [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}]}
+
+
+def test_upsert_device_defaults_new_json_fields_to_empty(repo):
+    repo.upsert_device(_device())
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["service_banners"] == {}
+    assert device["tls_certificates"] == {}
+    assert device["cve_findings"] == {}
+
+
 def test_upsert_device_persists_last_sensor_id(repo):
     repo.upsert_device(_device(last_sensor_id="sensor-a"))
     device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
@@ -301,6 +325,25 @@ def test_record_discovery_and_analysis_pass(repo):
     status = repo.get_pipeline_status()
     assert status["last_discovery_pass_at"] == 2000.0
     assert status["last_analysis_pass_at"] == 1005.0
+
+
+def test_cve_cache_round_trip(repo):
+    assert repo.get_cve_cache("openssh:8.9p1") is None
+
+    repo.upsert_cve_cache(
+        "openssh:8.9p1",
+        [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}],
+        checked_at=1000.0,
+    )
+    cached = repo.get_cve_cache("openssh:8.9p1")
+    assert cached["cves"] == [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}]
+    assert cached["checked_at"] == 1000.0
+
+    # una segunda escritura actualiza en el sitio, no crea una fila nueva
+    repo.upsert_cve_cache("openssh:8.9p1", [], checked_at=2000.0)
+    cached = repo.get_cve_cache("openssh:8.9p1")
+    assert cached["cves"] == []
+    assert cached["checked_at"] == 2000.0
 
 
 def test_neo4j_repository_raises_not_implemented():

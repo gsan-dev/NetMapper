@@ -43,6 +43,7 @@ def pipeline(tmp_path, pipeline_module):
     settings.mdns_enabled = False
     settings.passive_capture_enabled = False
     settings.netguardian_enabled = False
+    settings.cve_lookup_enabled = False
     db_module._repository_singleton = None
 
     instance = pipeline_module.Pipeline()
@@ -311,3 +312,57 @@ def test_poll_netguardian_alerts_uses_last_id_on_subsequent_calls(pipeline):
     pipeline.poll_netguardian_alerts()
 
     fake_client.fetch_recent_alerts.assert_called_with(since_id=5)
+
+
+def test_run_cve_lookup_pass_noop_when_disabled(pipeline, pipeline_module):
+    from common.config import settings
+
+    settings.cve_lookup_enabled = False
+    pipeline.engine.ingest_host(_host(), "192.168.1.0/24")
+    pipeline.engine.devices["aa:bb:cc:dd:ee:01"].service_banners = {22: "SSH-2.0-OpenSSH_8.9p1"}
+
+    with patch.object(pipeline_module.cve_lookup, "query_nvd") as mock_query:
+        pipeline.run_cve_lookup_pass()
+
+    mock_query.assert_not_called()
+    assert pipeline.engine.devices["aa:bb:cc:dd:ee:01"].cve_findings == {}
+
+
+def test_run_cve_lookup_pass_queries_and_caches_recognized_banners(pipeline, pipeline_module):
+    from common.config import settings
+
+    settings.cve_lookup_enabled = True
+    pipeline.engine.ingest_host(_host(), "192.168.1.0/24")
+    pipeline.engine.devices["aa:bb:cc:dd:ee:01"].service_banners = {
+        22: "SSH-2.0-OpenSSH_8.9p1",
+        80: "totally-custom-service",  # banner no reconocido: se ignora
+    }
+
+    findings = [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}]
+    with patch.object(
+        pipeline_module.cve_lookup, "query_nvd", return_value=findings
+    ) as mock_query, patch.object(pipeline_module.time, "sleep"):
+        pipeline.run_cve_lookup_pass()
+
+    mock_query.assert_called_once_with("openssh", "8.9p1", api_key=settings.nvd_api_key)
+    device = pipeline.engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.cve_findings == {22: findings}
+    assert pipeline.repo.get_cve_cache("openssh:8.9p1")["cves"] == findings
+
+
+def test_run_cve_lookup_pass_uses_cache_within_interval(pipeline, pipeline_module):
+    from common.config import settings
+
+    settings.cve_lookup_enabled = True
+    settings.cve_lookup_interval_seconds = 86400
+    pipeline.engine.ingest_host(_host(), "192.168.1.0/24")
+    pipeline.engine.devices["aa:bb:cc:dd:ee:01"].service_banners = {22: "SSH-2.0-OpenSSH_8.9p1"}
+
+    cached_findings = [{"cve_id": "CVE-2022-9", "severity": "low", "summary": "cached"}]
+    pipeline.repo.upsert_cve_cache("openssh:8.9p1", cached_findings, checked_at=time.time())
+
+    with patch.object(pipeline_module.cve_lookup, "query_nvd") as mock_query:
+        pipeline.run_cve_lookup_pass()
+
+    mock_query.assert_not_called()
+    assert pipeline.engine.devices["aa:bb:cc:dd:ee:01"].cve_findings == {22: cached_findings}

@@ -73,6 +73,23 @@ def test_ingest_fingerprint_enriches_existing_device():
     assert device.mdns_services == ["nas._smb._tcp.local."]
 
 
+def test_ingest_fingerprint_merges_banners_and_tls_certificates():
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    profile = DeviceProfile(
+        mac="aa:bb:cc:dd:ee:01",
+        ip="192.168.1.10",
+        service_banners={22: "SSH-2.0-OpenSSH_8.9p1"},
+        tls_certificates={443: {"subject": "CN=nas.local", "expired": False}},
+    )
+    device = engine.ingest_fingerprint(profile)
+
+    assert device.service_banners == {22: "SSH-2.0-OpenSSH_8.9p1"}
+    assert device.tls_certificates == {443: {"subject": "CN=nas.local", "expired": False}}
+    assert device.to_dict()["service_banners"] == {22: "SSH-2.0-OpenSSH_8.9p1"}
+
+
 def test_ingest_fingerprint_creates_device_when_not_seen_before():
     engine = FusionEngine()
     profile = DeviceProfile(mac="cc:cc:cc:cc:cc:cc", ip="192.168.1.20")
@@ -192,6 +209,26 @@ def test_apply_security_alerts_ignores_unknown_ips():
 
     assert len(engine.devices) == 1  # no se crea un dispositivo fantasma
     assert engine.devices["aa:bb:cc:dd:ee:01"].security_alert_count == 0
+
+
+def test_set_cve_findings_replaces_previous_findings():
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    engine.set_cve_findings(
+        "aa:bb:cc:dd:ee:01", {22: [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}]}
+    )
+    device = engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.cve_findings == {22: [{"cve_id": "CVE-2023-1", "severity": "high", "summary": "x"}]}
+
+    engine.set_cve_findings("aa:bb:cc:dd:ee:01", {})
+    assert engine.devices["aa:bb:cc:dd:ee:01"].cve_findings == {}
+
+
+def test_set_cve_findings_ignores_unknown_mac():
+    engine = FusionEngine()
+    engine.set_cve_findings("unknown-mac", {22: [{"cve_id": "CVE-2023-1"}]})
+    assert "unknown-mac" not in engine.devices
 
 
 def test_apply_security_alerts_keeps_max_severity_across_multiple_alerts():

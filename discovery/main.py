@@ -34,6 +34,7 @@ for _extra_path in (REPO_ROOT, REPO_ROOT / "analysis"):
     if str(_extra_path) not in sys.path:
         sys.path.insert(0, str(_extra_path))
 
+from common import cve_lookup
 from common.config import settings
 from common.db import get_repository
 from common.netguardian_client import NetGuardianClient
@@ -175,6 +176,40 @@ class Pipeline:
         self._last_netguardian_alert_id = max(a.alert_id for a in alerts)
         logger.info("NetGuardian: %d alerta(s) nueva(s) correlacionada(s)", len(alerts))
 
+    def run_cve_lookup_pass(self) -> None:
+        """Mejora futura ya implementada: correlación con CVEs conocidos (NVD).
+
+        Desactivada por defecto (CVE_LOOKUP_ENABLED). Solo consulta NVD
+        para banners reconocidos y cachea cada producto+versión durante
+        CVE_LOOKUP_INTERVAL_SECONDS; entre consulta real y consulta real
+        espera un margen para respetar el límite de tasa de la API
+        pública (más generoso si hay NVD_API_KEY configurada).
+        """
+        if not settings.cve_lookup_enabled:
+            return
+
+        rate_limit_gap = 0.7 if settings.nvd_api_key else 6.5
+        now = time.time()
+        for mac, device in self.engine.devices.items():
+            findings_by_port: dict[int, list] = {}
+            for port, banner in device.service_banners.items():
+                parsed = cve_lookup.parse_product_version(banner)
+                if parsed is None:
+                    continue
+                product, version = parsed
+                cache_key = f"{product}:{version}"
+                cached = self.repo.get_cve_cache(cache_key)
+                if cached is not None and now - cached["checked_at"] < settings.cve_lookup_interval_seconds:
+                    findings = cached["cves"]
+                else:
+                    findings = cve_lookup.query_nvd(product, version, api_key=settings.nvd_api_key)
+                    self.repo.upsert_cve_cache(cache_key, findings, now)
+                    time.sleep(rate_limit_gap)
+                if findings:
+                    findings_by_port[port] = findings
+            if findings_by_port:
+                self.engine.set_cve_findings(mac, findings_by_port)
+
     def persist_current_state(self) -> None:
         """Fase 6: escribe el estado acumulado del FusionEngine en la BD."""
         devices, relations = self.engine.snapshot()
@@ -212,6 +247,7 @@ class Pipeline:
     def run_once(self) -> None:
         self.run_discovery_pass()
         self.poll_netguardian_alerts()
+        self.run_cve_lookup_pass()
         self.persist_current_state()
         self.run_analysis_pass()
 
@@ -219,6 +255,7 @@ class Pipeline:
         self._start_passive_capture()
         last_analysis = 0.0
         last_netguardian_poll = 0.0
+        last_cve_lookup = 0.0
         try:
             while True:
                 self.run_discovery_pass()
@@ -227,6 +264,10 @@ class Pipeline:
                 if now - last_netguardian_poll >= settings.netguardian_poll_interval_seconds:
                     self.poll_netguardian_alerts()
                     last_netguardian_poll = now
+
+                if now - last_cve_lookup >= settings.cve_lookup_interval_seconds:
+                    self.run_cve_lookup_pass()
+                    last_cve_lookup = now
 
                 self.persist_current_state()
 

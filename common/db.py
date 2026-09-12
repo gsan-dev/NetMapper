@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS devices (
     mdns_services TEXT NOT NULL DEFAULT '[]',
     service_banners TEXT NOT NULL DEFAULT '{}',
     tls_certificates TEXT NOT NULL DEFAULT '{}',
+    cve_findings TEXT NOT NULL DEFAULT '{}',
     dns_queries TEXT NOT NULL DEFAULT '{}',
     subnet_cidrs TEXT NOT NULL DEFAULT '[]',
     first_seen REAL NOT NULL,
@@ -87,6 +88,15 @@ CREATE TABLE IF NOT EXISTS pipeline_status (
     last_discovery_pass_at REAL,
     last_analysis_pass_at REAL
 );
+
+-- Caché de resultados de NVD por "producto:versión", para no repetir
+-- consultas a la API pública en cada pasada (mejora futura: correlación
+-- de CVEs, ver common/cve_lookup.py).
+CREATE TABLE IF NOT EXISTS cve_cache (
+    cache_key TEXT PRIMARY KEY,
+    cves TEXT NOT NULL DEFAULT '[]',
+    checked_at REAL NOT NULL
+);
 """
 
 
@@ -101,6 +111,7 @@ def _device_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d["mdns_services"] = json.loads(d["mdns_services"])
     d["service_banners"] = {int(k): v for k, v in json.loads(d["service_banners"]).items()}
     d["tls_certificates"] = {int(k): v for k, v in json.loads(d["tls_certificates"]).items()}
+    d["cve_findings"] = {int(k): v for k, v in json.loads(d["cve_findings"]).items()}
     d["dns_queries"] = json.loads(d["dns_queries"])
     d["subnet_cidrs"] = json.loads(d["subnet_cidrs"])
     d["is_authorized"] = bool(d["is_authorized"])
@@ -160,6 +171,12 @@ class Repository(ABC):
 
     @abstractmethod
     def get_pipeline_status(self) -> dict[str, Any] | None: ...
+
+    @abstractmethod
+    def get_cve_cache(self, cache_key: str) -> dict[str, Any] | None: ...
+
+    @abstractmethod
+    def upsert_cve_cache(self, cache_key: str, cves: list[dict[str, Any]], checked_at: float) -> None: ...
 
 
 class SQLiteRepository(Repository):
@@ -223,11 +240,11 @@ class SQLiteRepository(Repository):
                 """
                 INSERT INTO devices (
                     mac, ips, vendor, device_type, open_ports, mdns_services,
-                    service_banners, tls_certificates, dns_queries, subnet_cidrs,
+                    service_banners, tls_certificates, cve_findings, dns_queries, subnet_cidrs,
                     first_seen, last_seen, active,
                     is_authorized, security_alert_count, security_max_severity,
                     security_last_reason, last_sensor_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
@@ -236,6 +253,7 @@ class SQLiteRepository(Repository):
                     mdns_services = excluded.mdns_services,
                     service_banners = excluded.service_banners,
                     tls_certificates = excluded.tls_certificates,
+                    cve_findings = excluded.cve_findings,
                     dns_queries = excluded.dns_queries,
                     subnet_cidrs = excluded.subnet_cidrs,
                     last_seen = excluded.last_seen,
@@ -255,6 +273,7 @@ class SQLiteRepository(Repository):
                     json.dumps(sorted(device.get("mdns_services", []))),
                     json.dumps(device.get("service_banners", {})),
                     json.dumps(device.get("tls_certificates", {})),
+                    json.dumps(device.get("cve_findings", {})),
                     json.dumps(device.get("dns_queries", {})),
                     json.dumps(sorted(device.get("subnet_cidrs", []))),
                     device.get("first_seen", now),
@@ -455,6 +474,30 @@ class SQLiteRepository(Repository):
             row = conn.execute("SELECT * FROM pipeline_status WHERE id = 1").fetchone()
             return _row_to_dict(row) if row else None
 
+    # --- Caché de CVEs ---
+
+    def get_cve_cache(self, cache_key: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cve_cache WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+            if row is None:
+                return None
+            return {"cves": json.loads(row["cves"]), "checked_at": row["checked_at"]}
+
+    def upsert_cve_cache(self, cache_key: str, cves: list[dict[str, Any]], checked_at: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO cve_cache (cache_key, cves, checked_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    cves = excluded.cves,
+                    checked_at = excluded.checked_at
+                """,
+                (cache_key, json.dumps(cves), checked_at),
+            )
+
 
 class Neo4jRepository(Repository):
     """Stub para la mejora futura: migrar a Neo4j para un modelo de grafo real.
@@ -527,6 +570,12 @@ class Neo4jRepository(Repository):
         self._not_implemented()
 
     def get_pipeline_status(self) -> dict[str, Any] | None:
+        self._not_implemented()
+
+    def get_cve_cache(self, cache_key: str) -> dict[str, Any] | None:
+        self._not_implemented()
+
+    def upsert_cve_cache(self, cache_key: str, cves: list[dict[str, Any]], checked_at: float) -> None:
         self._not_implemented()
 
 

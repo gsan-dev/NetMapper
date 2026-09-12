@@ -44,6 +44,10 @@ class Device:
     service_banners: dict[int, str] = field(default_factory=dict)
     # Mejora futura ya implementada: inspección de certificados TLS.
     tls_certificates: dict[int, dict] = field(default_factory=dict)
+    # Mejora futura ya implementada: correlación con CVEs conocidos
+    # (NVD) a partir de los banners de servicio — puerto -> lista de
+    # {cve_id, severity, summary}.
+    cve_findings: dict[int, list] = field(default_factory=dict)
     dns_queries: dict[str, int] = field(default_factory=dict)  # dominio -> nº consultas
     subnet_cidrs: set[str] = field(default_factory=set)
     first_seen: float = field(default_factory=time.time)
@@ -71,6 +75,7 @@ class Device:
             "mdns_services": self.mdns_services,
             "service_banners": self.service_banners,
             "tls_certificates": self.tls_certificates,
+            "cve_findings": self.cve_findings,
             "dns_queries": self.dns_queries,
             "subnet_cidrs": sorted(self.subnet_cidrs),
             "first_seen": self.first_seen,
@@ -208,6 +213,18 @@ class FusionEngine:
             if is_higher_severity(alert.severity, device.security_max_severity):
                 device.security_max_severity = alert.severity
             device.security_last_reason = alert.reason
+
+    def set_cve_findings(self, mac: str, findings_by_port: dict[int, list]) -> None:
+        """Mejora futura ya implementada: correlación con CVEs (NVD).
+
+        Sustituye por completo los hallazgos del dispositivo (no los
+        acumula) — cada pasada de `run_cve_lookup_pass` refleja el
+        estado actual de la caché de NVD, no un histórico.
+        """
+        device = self.devices.get(mac)
+        if device is None:
+            return
+        device.cve_findings = findings_by_port
 
     def prune_stale_devices(self, max_age_seconds: float, now: float | None = None) -> list[str]:
         """Elimina dispositivos no vistos en `max_age_seconds`; devuelve sus MACs."""
