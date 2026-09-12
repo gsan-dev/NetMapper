@@ -2,13 +2,16 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from scapy.all import Ether as ScapyEther
+from scapy.all import ICMPv6EchoReply
+from scapy.all import IPv6 as ScapyIPv6
 
 import host_discovery as hd
 from network_discovery import Subnet
 
 
-def _subnet(cidr="192.168.1.0/24", method="direct"):
-    return Subnet(cidr=cidr, discovery_method=method)
+def _subnet(cidr="192.168.1.0/24", method="direct", interface="eth0"):
+    return Subnet(cidr=cidr, discovery_method=method, interface=interface)
 
 
 def test_arp_scan_returns_hosts_from_answered_pairs():
@@ -36,6 +39,53 @@ def test_arp_scan_handles_exceptions_gracefully():
         hd, "srp", side_effect=OSError("no such device")
     ):
         assert hd.arp_scan(_subnet()) == []
+
+
+def test_ndp_scan_returns_hosts_from_answered_pairs():
+    received1 = (
+        ScapyEther(src="aa:bb:cc:dd:ee:01")
+        / ScapyIPv6(src="2001:db8::10", dst="2001:db8::1")
+        / ICMPv6EchoReply()
+    )
+    received2 = (
+        ScapyEther(src="aa:bb:cc:dd:ee:02")
+        / ScapyIPv6(src="2001:db8::11", dst="2001:db8::1")
+        / ICMPv6EchoReply()
+    )
+    answered = [(MagicMock(), received1), (MagicMock(), received2)]
+
+    with patch.object(hd, "_SCAPY_AVAILABLE", True), patch.object(
+        hd, "sr", return_value=(answered, [])
+    ):
+        hosts = hd.ndp_scan(_subnet(cidr="2001:db8::/64"), timeout=1)
+
+    assert len(hosts) == 2
+    assert {h.ip for h in hosts} == {"2001:db8::10", "2001:db8::11"}
+    assert {h.mac for h in hosts} == {"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"}
+    assert all(h.discovery_method == "ndp" for h in hosts)
+
+
+def test_ndp_scan_returns_empty_without_scapy():
+    with patch.object(hd, "_SCAPY_AVAILABLE", False):
+        assert hd.ndp_scan(_subnet(cidr="2001:db8::/64")) == []
+
+
+def test_ndp_scan_handles_exceptions_gracefully():
+    with patch.object(hd, "_SCAPY_AVAILABLE", True), patch.object(
+        hd, "sr", side_effect=OSError("no such device")
+    ):
+        assert hd.ndp_scan(_subnet(cidr="2001:db8::/64")) == []
+
+
+def test_discover_hosts_uses_ndp_for_direct_ipv6_networks():
+    with patch.object(hd, "ndp_scan", return_value=["fake"]) as mock_ndp, patch.object(
+        hd, "arp_scan"
+    ) as mock_arp:
+        result = hd.discover_hosts(_subnet(cidr="2001:db8::/64", method="direct"))
+
+    assert result == ["fake"]
+    mock_ndp.assert_called_once()
+    mock_arp.assert_not_called()
 
 
 @pytest.mark.asyncio

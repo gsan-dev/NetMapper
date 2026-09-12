@@ -1,15 +1,21 @@
 """Descubrimiento de hosts vivos por subred (Fase 1).
 
-- Redes **directamente conectadas**: ARP scan (capa 2) — casi
+- Redes **directamente conectadas** IPv4: ARP scan (capa 2) — casi
   instantáneo y muy fiable dentro del mismo segmento físico.
-- Redes **remotas** (solo alcanzables vía routing): ARP no funciona más
-  allá del segmento local, así que se usa un sondeo TCP asíncrono sobre
-  puertos comunes (más fiable que ICMP, que muchos firewalls filtran).
+- Redes **directamente conectadas** IPv6: ARP no existe en IPv6 (lo
+  sustituye NDP) y un /64 típico tiene 2**64 direcciones — demasiadas
+  para barrerlas una a una. En su lugar se envía un ICMPv6 Echo
+  Request al grupo multicast "todos los nodos del enlace" (ff02::1) y
+  se escuchan las respuestas.
+- Redes **remotas** (solo alcanzables vía routing, IPv4 o IPv6): ni
+  ARP ni el multicast de enlace llegan más allá del segmento local,
+  así que se usa un sondeo TCP asíncrono sobre puertos comunes (más
+  fiable que ICMP, que muchos firewalls filtran).
 
 `discover_hosts()` decide automáticamente qué técnica usar según el
-`discovery_method` de la subred, en vez de aplicar la misma técnica a
-todo — evita ser agresivo en redes remotas donde ARP ni siquiera
-llegaría.
+tipo y la familia de la subred, en vez de aplicar la misma técnica a
+todo — evita ser agresivo en redes remotas donde ni ARP ni NDP
+llegarían.
 """
 from __future__ import annotations
 
@@ -22,12 +28,16 @@ from network_discovery import Subnet
 logger = logging.getLogger("netmapper.host_discovery")
 
 try:
-    from scapy.all import ARP, Ether, srp
+    from scapy.all import ARP, ICMPv6EchoRequest, Ether, IPv6, sr, srp
 
     _SCAPY_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    ARP = Ether = srp = None  # noqa: N816
+    ARP = Ether = srp = IPv6 = ICMPv6EchoRequest = sr = None  # noqa: N816
     _SCAPY_AVAILABLE = False
+
+# Dirección multicast "todos los nodos del enlace" en IPv6 (equivalente,
+# a efectos de descubrimiento, al broadcast de ARP en IPv4).
+IPV6_ALL_NODES_MULTICAST = "ff02::1"
 
 # Puertos habituales para el sondeo TCP de redes remotas: si cualquiera
 # responde (abierto o con RST), el host está vivo.
@@ -43,7 +53,7 @@ class Host:
     ip: str
     mac: str | None
     subnet_cidr: str
-    discovery_method: str  # "arp" | "tcp_probe"
+    discovery_method: str  # "arp" | "ndp" | "tcp_probe"
 
     def to_dict(self) -> dict:
         return {
@@ -78,6 +88,37 @@ def arp_scan(subnet: Subnet, timeout: int = 3) -> list[Host]:
             )
         )
     return hosts
+
+
+def ndp_scan(subnet: Subnet, timeout: int = 3) -> list[Host]:
+    """Escanea una red IPv6 directamente conectada vía NDP/ICMPv6.
+
+    Envía un Echo Request a ff02::1 (todos los nodos del enlace) y
+    recoge las respuestas — cada host vivo en el enlace responde con su
+    propia IP de origen. Requiere permisos root, igual que arp_scan.
+    """
+    if not _SCAPY_AVAILABLE:
+        logger.warning("Scapy no disponible; no se puede hacer NDP scan")
+        return []
+
+    try:
+        request = IPv6(dst=IPV6_ALL_NODES_MULTICAST) / ICMPv6EchoRequest()
+        answered, _unanswered = sr(
+            request, timeout=timeout, verbose=False, iface=subnet.interface, multi=True
+        )
+    except Exception:
+        logger.exception("Error haciendo NDP scan de %s", subnet.cidr)
+        return []
+
+    hosts: dict[str, Host] = {}
+    for _sent, received in answered:
+        if IPv6 not in received:
+            continue
+        ip = received[IPv6].src
+        mac = received[Ether].src if Ether in received else None
+        hosts[ip] = Host(ip=ip, mac=mac, subnet_cidr=subnet.cidr, discovery_method="ndp")
+
+    return list(hosts.values())
 
 
 async def _probe_host(ip: str, ports: tuple[int, ...], timeout: float) -> bool:
@@ -140,7 +181,9 @@ def discover_hosts(
     tcp_timeout: float = 1.0,
     tcp_concurrency: int = 100,
 ) -> list[Host]:
-    """Elige ARP o sondeo TCP según si la subred es directamente conectada."""
+    """Elige ARP, NDP o sondeo TCP según el tipo y la familia de la subred."""
     if subnet.discovery_method == "direct":
+        if subnet.network.version == 6:
+            return ndp_scan(subnet, timeout=arp_timeout)
         return arp_scan(subnet, timeout=arp_timeout)
     return tcp_probe_sweep(subnet, timeout=tcp_timeout, concurrency=tcp_concurrency)

@@ -1,7 +1,7 @@
 """Pruebas de la captura pasiva y agregación por ventanas (Fase 3)."""
 import time
 
-from scapy.all import DNS, DNSQR, IP, UDP, Ether, Raw
+from scapy.all import DNS, DNSQR, IP, UDP, Ether, IPv6, Raw
 
 from passive_capture import Edge, PacketObservation, PassiveCapture, WindowAggregator, parse_packet
 
@@ -15,6 +15,20 @@ def test_parse_packet_plain_ip():
     assert obs.dst_ip == "10.0.0.1"
     assert obs.length > 50
     assert obs.dns_query is None
+
+
+def test_parse_packet_plain_ipv6():
+    # Ether con src/dst explícitos: sin ellos, scapy intenta resolver la
+    # interfaz de salida para un destino IPv6 (para autocompletar la MAC),
+    # lo que falla en máquinas sin una ruta IPv6 real configurada.
+    eth = Ether(src="aa:aa:aa:aa:aa:aa", dst="bb:bb:bb:bb:bb:bb")
+    pkt = eth / IPv6(src="2001:db8::10", dst="2001:db8::1") / Raw(b"x" * 50)
+    obs = parse_packet(pkt)
+
+    assert obs is not None
+    assert obs.src_ip == "2001:db8::10"
+    assert obs.dst_ip == "2001:db8::1"
+    assert obs.length > 50
 
 
 def test_parse_packet_extracts_dns_query():

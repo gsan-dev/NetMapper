@@ -29,6 +29,11 @@ except ImportError:  # pragma: no cover
     DNS = DNSQR = IP = AsyncSniffer = None  # noqa: N816
     _SCAPY_AVAILABLE = False
 
+try:
+    from scapy.all import IPv6
+except ImportError:  # pragma: no cover
+    IPv6 = None  # noqa: N816
+
 
 @dataclass(frozen=True)
 class PacketObservation:
@@ -39,11 +44,14 @@ class PacketObservation:
 
 
 def parse_packet(pkt) -> PacketObservation | None:
-    """Convierte un paquete de Scapy en una PacketObservation, o None si no es IP."""
-    if IP is None or IP not in pkt:
+    """Convierte un paquete de Scapy en una PacketObservation, o None si no es IP/IPv6."""
+    if IP is not None and IP in pkt:
+        ip_layer = pkt[IP]
+    elif IPv6 is not None and IPv6 in pkt:
+        ip_layer = pkt[IPv6]
+    else:
         return None
 
-    ip_layer = pkt[IP]
     dns_query = None
     if DNS is not None and DNS in pkt and pkt[DNS].qr == 0 and pkt.haslayer(DNSQR):
         try:
