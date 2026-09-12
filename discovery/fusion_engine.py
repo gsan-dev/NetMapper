@@ -39,6 +39,9 @@ class Device:
     device_type: str = "unknown"
     open_ports: set[int] = field(default_factory=set)
     mdns_services: list[str] = field(default_factory=list)
+    # Mejora futura ya implementada: banner grabbing — versión de
+    # servicio por puerto, base para la correlación con CVEs.
+    service_banners: dict[int, str] = field(default_factory=dict)
     dns_queries: dict[str, int] = field(default_factory=dict)  # dominio -> nº consultas
     subnet_cidrs: set[str] = field(default_factory=set)
     first_seen: float = field(default_factory=time.time)
@@ -64,6 +67,7 @@ class Device:
             "device_type": self.device_type,
             "open_ports": sorted(self.open_ports),
             "mdns_services": self.mdns_services,
+            "service_banners": self.service_banners,
             "dns_queries": self.dns_queries,
             "subnet_cidrs": sorted(self.subnet_cidrs),
             "first_seen": self.first_seen,
@@ -146,6 +150,8 @@ class FusionEngine:
             device.mdns_services = sorted(
                 set(device.mdns_services) | set(profile.mdns_services)
             )
+        if profile.service_banners:
+            device.service_banners.update(profile.service_banners)
         return device
 
     def _resolve_mac(self, ip: str) -> str:

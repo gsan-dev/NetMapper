@@ -105,7 +105,7 @@ def test_fingerprint_host_combines_all_signals():
 
     with patch.object(df, "lookup_vendor", return_value="Synology Incorporated"), patch.object(
         df, "scan_ports", return_value={445, 5000}
-    ):
+    ), patch.object(df, "grab_banners", return_value={445: "Samba 4.15"}) as mock_banners:
         profile = df.fingerprint_host(host, mdns_services_by_ip={"192.168.1.42": ["nas._smb._tcp.local."]})
 
     assert profile.mac == "00:11:32:aa:bb:cc"
@@ -113,6 +113,20 @@ def test_fingerprint_host_combines_all_signals():
     assert profile.open_ports == {445, 5000}
     assert profile.device_type == "nas"
     assert profile.mdns_services == ["nas._smb._tcp.local."]
+    assert profile.service_banners == {445: "Samba 4.15"}
+    mock_banners.assert_called_once()
+
+
+def test_fingerprint_host_skips_banner_grab_when_disabled():
+    host = Host(ip="192.168.1.42", mac="00:11:32:aa:bb:cc", subnet_cidr="192.168.1.0/24", discovery_method="arp")
+
+    with patch.object(df, "lookup_vendor", return_value=None), patch.object(
+        df, "scan_ports", return_value={22}
+    ), patch.object(df, "grab_banners") as mock_banners:
+        profile = df.fingerprint_host(host, banner_grab_enabled=False)
+
+    mock_banners.assert_not_called()
+    assert profile.service_banners == {}
 
 
 def test_fingerprint_host_uses_placeholder_mac_when_missing():

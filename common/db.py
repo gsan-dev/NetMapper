@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS devices (
     device_type TEXT NOT NULL DEFAULT 'unknown',
     open_ports TEXT NOT NULL DEFAULT '[]',
     mdns_services TEXT NOT NULL DEFAULT '[]',
+    service_banners TEXT NOT NULL DEFAULT '{}',
     dns_queries TEXT NOT NULL DEFAULT '{}',
     subnet_cidrs TEXT NOT NULL DEFAULT '[]',
     first_seen REAL NOT NULL,
@@ -97,6 +98,7 @@ def _device_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d["ips"] = json.loads(d["ips"])
     d["open_ports"] = json.loads(d["open_ports"])
     d["mdns_services"] = json.loads(d["mdns_services"])
+    d["service_banners"] = {int(k): v for k, v in json.loads(d["service_banners"]).items()}
     d["dns_queries"] = json.loads(d["dns_queries"])
     d["subnet_cidrs"] = json.loads(d["subnet_cidrs"])
     d["is_authorized"] = bool(d["is_authorized"])
@@ -219,16 +221,17 @@ class SQLiteRepository(Repository):
                 """
                 INSERT INTO devices (
                     mac, ips, vendor, device_type, open_ports, mdns_services,
-                    dns_queries, subnet_cidrs, first_seen, last_seen, active,
+                    service_banners, dns_queries, subnet_cidrs, first_seen, last_seen, active,
                     is_authorized, security_alert_count, security_max_severity,
                     security_last_reason, last_sensor_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
                     device_type = excluded.device_type,
                     open_ports = excluded.open_ports,
                     mdns_services = excluded.mdns_services,
+                    service_banners = excluded.service_banners,
                     dns_queries = excluded.dns_queries,
                     subnet_cidrs = excluded.subnet_cidrs,
                     last_seen = excluded.last_seen,
@@ -246,6 +249,7 @@ class SQLiteRepository(Repository):
                     device.get("device_type", "unknown"),
                     json.dumps(sorted(device.get("open_ports", []))),
                     json.dumps(sorted(device.get("mdns_services", []))),
+                    json.dumps(device.get("service_banners", {})),
                     json.dumps(device.get("dns_queries", {})),
                     json.dumps(sorted(device.get("subnet_cidrs", []))),
                     device.get("first_seen", now),

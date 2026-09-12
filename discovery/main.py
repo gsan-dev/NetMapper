@@ -127,6 +127,8 @@ class Pipeline:
                     mdns_services_by_ip=mdns_services,
                     port_scan_timeout=settings.port_scan_timeout_seconds,
                     port_scan_concurrency=settings.port_scan_concurrency,
+                    banner_grab_enabled=settings.banner_grab_enabled,
+                    banner_grab_timeout=settings.banner_grab_timeout_seconds,
                 )
                 self.engine.ingest_fingerprint(profile)
 
