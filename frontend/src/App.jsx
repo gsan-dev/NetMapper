@@ -29,6 +29,7 @@ export default function App() {
     }
   });
   const [layoutName, setLayoutName] = useState("force");
+  const [groupBySubnet, setGroupBySubnet] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [deviceHistory, setDeviceHistory] = useState([]);
   const [wsStatus, setWsStatus] = useState("desconectado");
@@ -184,6 +185,8 @@ export default function App() {
           onSearchChange={setSearchQuery}
           layoutName={layoutName}
           onLayoutChange={setLayoutName}
+          groupBySubnet={groupBySubnet}
+          onGroupBySubnetChange={setGroupBySubnet}
           selectedDevice={selectedDevice}
           deviceHistory={deviceHistory}
         />
@@ -195,6 +198,7 @@ export default function App() {
             relations={relations}
             layoutName={layoutName}
             theme={theme}
+            groupBySubnet={groupBySubnet}
             onSelectDevice={setSelectedDevice}
           />
           {filteredDevices.length === 0 && devices.length === 0 && (

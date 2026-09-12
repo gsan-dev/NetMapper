@@ -25,25 +25,42 @@ function escapeXml(value) {
   })[c]);
 }
 
-function buildElements(devices, relations) {
-  const nodes = devices.map((d) => ({
-    data: {
-      id: d.mac,
-      label: d.ips?.[0] || d.mac,
-      deviceType: d.device_type,
-      vendor: d.vendor || "Fabricante desconocido",
-      ips: (d.ips || []).join(", "),
-      openPorts: (d.open_ports || []).join(", ") || "ninguno detectado",
-      // false solo cuando el backend lo marca explícitamente (whitelist
-      // ALLOWED_DEVICES configurada); si el campo no viene, se asume
-      // autorizado para no pintar de "sospechoso" datos antiguos/parciales.
-      isAuthorized: d.is_authorized !== false,
-      // Integración con NetGuardian: severidad máxima de alerta reciente.
-      securityMaxSeverity: d.security_max_severity || "none",
-      securityAlertCount: d.security_alert_count || 0,
-      securityLastReason: d.security_last_reason,
-    },
-  }));
+const SUBNET_GROUP_PREFIX = "subnet:";
+
+function buildElements(devices, relations, groupBySubnet) {
+  const nodes = devices.map((d) => {
+    const subnet = d.subnet_cidrs?.[0];
+    return {
+      data: {
+        id: d.mac,
+        label: d.ips?.[0] || d.mac,
+        deviceType: d.device_type,
+        vendor: d.vendor || "Fabricante desconocido",
+        ips: (d.ips || []).join(", "),
+        openPorts: (d.open_ports || []).join(", ") || "ninguno detectado",
+        // false solo cuando el backend lo marca explícitamente (whitelist
+        // ALLOWED_DEVICES configurada); si el campo no viene, se asume
+        // autorizado para no pintar de "sospechoso" datos antiguos/parciales.
+        isAuthorized: d.is_authorized !== false,
+        // Integración con NetGuardian: severidad máxima de alerta reciente.
+        securityMaxSeverity: d.security_max_severity || "none",
+        securityAlertCount: d.security_alert_count || 0,
+        securityLastReason: d.security_last_reason,
+        // Nodo compuesto (grupo visual por subred): solo se asigna si el
+        // modo "agrupar por subred" está activo y el dispositivo tiene
+        // una subred conocida — Cytoscape ignora `parent` si es undefined.
+        parent: groupBySubnet && subnet ? `${SUBNET_GROUP_PREFIX}${subnet}` : undefined,
+      },
+    };
+  });
+
+  const groupNodes = [];
+  if (groupBySubnet) {
+    const subnets = new Set(devices.map((d) => d.subnet_cidrs?.[0]).filter(Boolean));
+    for (const cidr of subnets) {
+      groupNodes.push({ data: { id: `${SUBNET_GROUP_PREFIX}${cidr}`, label: cidr, isGroup: true } });
+    }
+  }
 
   const nodeIds = new Set(nodes.map((n) => n.data.id));
   const edges = relations
@@ -57,7 +74,7 @@ function buildElements(devices, relations) {
       },
     }));
 
-  return [...nodes, ...edges];
+  return [...groupNodes, ...nodes, ...edges];
 }
 
 // Los colores base (fondo del nodo por tipo, halo de severidad) son
@@ -97,6 +114,29 @@ function buildStyle() {
       },
     },
     {
+      // Nodo compuesto (grupo visual por subred): va DESPUÉS del selector
+      // genérico "node" a propósito, para que estas reglas ganen sobre
+      // las suyas en vez de al revés (Cytoscape aplica los estilos en
+      // orden, como una cascada CSS). Dibuja el contenedor, no un
+      // dispositivo real, así que no lleva color de tipo ni halo.
+      selector: "node[isGroup]",
+      style: {
+        "background-color": cssVar("--surface-alt", "#16213a"),
+        "background-opacity": 0.5,
+        "border-width": 1,
+        "border-style": "dashed",
+        "border-color": edgeColor,
+        label: "data(label)",
+        "font-size": 10,
+        color: label,
+        "text-valign": "top",
+        "text-halign": "center",
+        "text-margin-y": -6,
+        shape: "round-rectangle",
+        padding: "16px",
+      },
+    },
+    {
       selector: "node:selected",
       style: {
         "border-width": 3,
@@ -117,7 +157,7 @@ function buildStyle() {
 }
 
 const NetworkGraph = forwardRef(function NetworkGraph(
-  { devices, relations, layoutName, theme, onSelectDevice },
+  { devices, relations, layoutName, theme, groupBySubnet, onSelectDevice },
   ref
 ) {
   const containerRef = useRef(null);
@@ -132,6 +172,7 @@ const NetworkGraph = forwardRef(function NetworkGraph(
 
       const nodesXml = cy
         .nodes()
+        .not("[isGroup]") // los grupos visuales por subred no son dispositivos reales
         .map(
           (n) =>
             `    <node id="${escapeXml(n.id())}"><data key="label">${escapeXml(
@@ -166,7 +207,7 @@ const NetworkGraph = forwardRef(function NetworkGraph(
 
     const cy = cytoscape({
       container: containerRef.current,
-      elements: buildElements(devices, relations),
+      elements: buildElements(devices, relations, groupBySubnet),
       style: buildStyle(),
       layout: {
         // animate:false a propósito: con animate:true, si React StrictMode
@@ -184,13 +225,15 @@ const NetworkGraph = forwardRef(function NetworkGraph(
     });
 
     cy.on("tap", "node", (evt) => {
-      onSelectDevice && onSelectDevice(evt.target.data());
+      const data = evt.target.data();
+      if (data.isGroup) return; // los grupos visuales por subred no son dispositivos
+      onSelectDevice && onSelectDevice(data);
     });
 
     cyRef.current = cy;
     return () => cy.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devices, relations, layoutName, theme]);
+  }, [devices, relations, layoutName, theme, groupBySubnet]);
 
   return <div ref={containerRef} className="graph-canvas" />;
 });

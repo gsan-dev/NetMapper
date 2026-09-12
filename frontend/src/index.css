@@ -260,6 +260,19 @@ button.active {
   margin-bottom: 1.1rem;
 }
 
+.filter-panel .checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.filter-panel .checkbox-field input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
+
 .filter-panel select,
 .filter-panel input[type="text"] {
   background: var(--surface-alt);

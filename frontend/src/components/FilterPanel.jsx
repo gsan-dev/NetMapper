@@ -28,6 +28,8 @@ export default function FilterPanel({
   onSearchChange,
   layoutName,
   onLayoutChange,
+  groupBySubnet,
+  onGroupBySubnetChange,
   selectedDevice,
   deviceHistory = [],
 }) {
@@ -57,6 +59,15 @@ export default function FilterPanel({
             </option>
           ))}
         </select>
+      </label>
+
+      <label className="field checkbox-field">
+        <input
+          type="checkbox"
+          checked={groupBySubnet}
+          onChange={(e) => onGroupBySubnetChange(e.target.checked)}
+        />
+        Agrupar por subred
       </label>
 
       <div className="field">
