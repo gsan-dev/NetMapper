@@ -46,7 +46,10 @@ CREATE TABLE IF NOT EXISTS devices (
     first_seen REAL NOT NULL,
     last_seen REAL NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
-    is_authorized INTEGER NOT NULL DEFAULT 1
+    is_authorized INTEGER NOT NULL DEFAULT 1,
+    security_alert_count INTEGER NOT NULL DEFAULT 0,
+    security_max_severity TEXT NOT NULL DEFAULT 'none',
+    security_last_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS relations (
@@ -195,8 +198,9 @@ class SQLiteRepository(Repository):
                 INSERT INTO devices (
                     mac, ips, vendor, device_type, open_ports, mdns_services,
                     dns_queries, subnet_cidrs, first_seen, last_seen, active,
-                    is_authorized
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    is_authorized, security_alert_count, security_max_severity,
+                    security_last_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
@@ -207,7 +211,10 @@ class SQLiteRepository(Repository):
                     subnet_cidrs = excluded.subnet_cidrs,
                     last_seen = excluded.last_seen,
                     active = 1,
-                    is_authorized = excluded.is_authorized
+                    is_authorized = excluded.is_authorized,
+                    security_alert_count = excluded.security_alert_count,
+                    security_max_severity = excluded.security_max_severity,
+                    security_last_reason = excluded.security_last_reason
                 """,
                 (
                     device["mac"],
@@ -221,6 +228,9 @@ class SQLiteRepository(Repository):
                     device.get("first_seen", now),
                     device.get("last_seen", now),
                     int(device.get("is_authorized", True)),
+                    device.get("security_alert_count", 0),
+                    device.get("security_max_severity", "none"),
+                    device.get("security_last_reason"),
                 ),
             )
             row = conn.execute(

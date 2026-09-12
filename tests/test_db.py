@@ -70,6 +70,30 @@ def test_upsert_device_persists_unauthorized_flag(repo):
     assert device["is_authorized"] is True
 
 
+def test_upsert_device_persists_security_alert_fields(repo):
+    repo.upsert_device(
+        _device(
+            security_alert_count=3,
+            security_max_severity="high",
+            security_last_reason="port scan",
+        )
+    )
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["security_alert_count"] == 3
+    assert device["security_max_severity"] == "high"
+    assert device["security_last_reason"] == "port scan"
+
+
+def test_upsert_device_defaults_security_fields_to_none_severity(repo):
+    repo.upsert_device(_device())
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["security_alert_count"] == 0
+    assert device["security_max_severity"] == "none"
+    assert device["security_last_reason"] is None
+
+
 def test_upsert_device_keeps_vendor_when_new_value_is_none(repo):
     repo.upsert_device(_device(vendor="Synology Incorporated"))
     repo.upsert_device(_device(vendor=None, ips=["192.168.1.11"]))

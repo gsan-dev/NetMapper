@@ -118,6 +118,36 @@ button.active {
   font-weight: 600;
 }
 
+.severity-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.severity-badge.severity-low {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.severity-badge.severity-medium {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+}
+
+.severity-badge.severity-high {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.security-reason {
+  margin-top: 0.25rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
 .topbar-actions {
   display: flex;
   gap: 0.5rem;

@@ -3,10 +3,11 @@ import importlib.util
 import ipaddress
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from common.netguardian_client import SecurityAlert
 from device_fingerprint import DeviceProfile
 from host_discovery import Host
 from network_discovery import Subnet
@@ -40,6 +41,7 @@ def pipeline(tmp_path, pipeline_module):
     settings.allowed_devices = set()
     settings.mdns_enabled = False
     settings.passive_capture_enabled = False
+    settings.netguardian_enabled = False
     db_module._repository_singleton = None
 
     instance = pipeline_module.Pipeline()
@@ -206,3 +208,66 @@ def test_start_passive_capture_starts_when_enabled(pipeline, pipeline_module):
 
     mock_capture_cls.assert_called_once()
     mock_capture_cls.return_value.start.assert_called_once()
+
+
+def test_pipeline_does_not_create_netguardian_client_when_disabled(pipeline):
+    assert pipeline._netguardian_client is None
+
+
+def test_pipeline_creates_netguardian_client_when_enabled(pipeline_module, tmp_path):
+    import common.db as db_module
+    from common.config import settings
+
+    settings.db_path = str(tmp_path / "pipeline_ng_test.db")
+    settings.netguardian_enabled = True
+    settings.netguardian_api_url = "http://localhost:8000"
+    db_module._repository_singleton = None
+
+    instance = pipeline_module.Pipeline()
+
+    assert instance._netguardian_client is not None
+    assert instance._netguardian_client.base_url == "http://localhost:8000"
+
+    settings.netguardian_enabled = False
+    db_module._repository_singleton = None
+
+
+def test_poll_netguardian_alerts_noop_when_disabled(pipeline):
+    pipeline.engine.ingest_host(_host(), "192.168.1.0/24")
+    pipeline.poll_netguardian_alerts()  # sin cliente configurado, no debe fallar
+
+    assert pipeline.engine.devices["aa:bb:cc:dd:ee:01"].security_alert_count == 0
+
+
+def test_poll_netguardian_alerts_ingests_and_advances_last_id(pipeline):
+    pipeline.engine.ingest_host(_host(ip="192.168.1.10", mac="aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    fake_client = MagicMock()
+    fake_client.fetch_recent_alerts.return_value = [
+        SecurityAlert(alert_id=5, source_ip="192.168.1.10", severity="high", reason="port scan", created_at=1.0),
+    ]
+    pipeline._netguardian_client = fake_client
+
+    pipeline.poll_netguardian_alerts()
+
+    fake_client.fetch_recent_alerts.assert_called_once_with(since_id=0)
+    device = pipeline.engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.security_alert_count == 1
+    assert device.security_max_severity == "high"
+    assert pipeline._last_netguardian_alert_id == 5
+
+
+def test_poll_netguardian_alerts_uses_last_id_on_subsequent_calls(pipeline):
+    pipeline.engine.ingest_host(_host(ip="192.168.1.10", mac="aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    fake_client = MagicMock()
+    fake_client.fetch_recent_alerts.return_value = [
+        SecurityAlert(alert_id=5, source_ip="192.168.1.10", severity="low", reason="a", created_at=1.0),
+    ]
+    pipeline._netguardian_client = fake_client
+    pipeline.poll_netguardian_alerts()
+
+    fake_client.fetch_recent_alerts.return_value = []
+    pipeline.poll_netguardian_alerts()
+
+    fake_client.fetch_recent_alerts.assert_called_with(since_id=5)

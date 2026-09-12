@@ -8,5 +8,8 @@ scapy>=2.5,<3.0
 manuf>=1.1,<2.0
 zeroconf>=0.130,<1.0
 
+# Integración con NetGuardian (mejora futura ya implementada)
+requests>=2.31,<3.0
+
 # Config
 python-dotenv>=1.0,<2.0

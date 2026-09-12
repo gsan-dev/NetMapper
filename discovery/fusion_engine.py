@@ -26,6 +26,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from common.severity import is_higher_severity
+
 logger = logging.getLogger("netmapper.fusion_engine")
 
 
@@ -47,6 +49,12 @@ class Device:
     # en discovery/main.py). El FusionEngine en sí no conoce la whitelist,
     # para mantenerlo desacoplado de la configuración global.
     is_authorized: bool = True
+    # Mejora futura ya implementada: integración con NetGuardian. Se
+    # rellenan solo si NETGUARDIAN_ENABLED=true (ver
+    # FusionEngine.apply_security_alerts más abajo).
+    security_alert_count: int = 0
+    security_max_severity: str = "none"
+    security_last_reason: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +69,9 @@ class Device:
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
             "is_authorized": self.is_authorized,
+            "security_alert_count": self.security_alert_count,
+            "security_max_severity": self.security_max_severity,
+            "security_last_reason": self.security_last_reason,
         }
 
 
@@ -166,6 +177,26 @@ class FusionEngine:
                 continue
             for domain, count in queries.items():
                 device.dns_queries[domain] = device.dns_queries.get(domain, 0) + count
+
+    def apply_security_alerts(self, alerts: list) -> None:
+        """Mejora futura ya implementada: integración con NetGuardian.
+
+        Resuelve cada alerta (por su source_ip) al dispositivo conocido
+        correspondiente y acumula su recuento/severidad máxima/motivo más
+        reciente. Las alertas de IPs sin dispositivo conocido se ignoran
+        en vez de crear dispositivos fantasma.
+        """
+        for alert in alerts:
+            mac = self.ip_to_mac.get(alert.source_ip)
+            if mac is None:
+                continue
+            device = self.devices.get(mac)
+            if device is None:
+                continue
+            device.security_alert_count += 1
+            if is_higher_severity(alert.severity, device.security_max_severity):
+                device.security_max_severity = alert.severity
+            device.security_last_reason = alert.reason
 
     def prune_stale_devices(self, max_age_seconds: float, now: float | None = None) -> list[str]:
         """Elimina dispositivos no vistos en `max_age_seconds`; devuelve sus MACs."""

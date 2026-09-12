@@ -99,6 +99,19 @@ export default function FilterPanel({
                 "Autorizado"
               )}
             </dd>
+            {selectedDevice.securityMaxSeverity && selectedDevice.securityMaxSeverity !== "none" && (
+              <>
+                <dt>Alertas (NetGuardian)</dt>
+                <dd>
+                  <span className={`severity-badge severity-${selectedDevice.securityMaxSeverity}`}>
+                    {selectedDevice.securityAlertCount} · {selectedDevice.securityMaxSeverity}
+                  </span>
+                  {selectedDevice.securityLastReason && (
+                    <div className="security-reason">{selectedDevice.securityLastReason}</div>
+                  )}
+                </dd>
+              </>
+            )}
           </dl>
 
           {firstSeen && (

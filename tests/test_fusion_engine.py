@@ -1,4 +1,6 @@
 """Pruebas del motor de fusión de datos multi-fuente (Fase 4)."""
+from dataclasses import dataclass
+
 from device_fingerprint import DeviceProfile
 from fusion_engine import FusionEngine
 from host_discovery import Host
@@ -7,6 +9,15 @@ from passive_capture import Edge
 
 def _host(ip, mac, method="arp"):
     return Host(ip=ip, mac=mac, subnet_cidr="192.168.1.0/24", discovery_method=method)
+
+
+@dataclass(frozen=True)
+class _FakeAlert:
+    alert_id: int
+    source_ip: str
+    severity: str
+    reason: str
+    created_at: float = 0.0
 
 
 def test_ingest_host_creates_device_with_ip_and_subnet():
@@ -146,3 +157,55 @@ def test_snapshot_returns_devices_and_relations():
 
     assert len(devices) == 1
     assert len(relations) == 1
+
+
+def test_device_defaults_to_no_security_alerts():
+    engine = FusionEngine()
+    device = engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    assert device.security_alert_count == 0
+    assert device.security_max_severity == "none"
+    assert device.to_dict()["security_max_severity"] == "none"
+
+
+def test_apply_security_alerts_resolves_to_known_device():
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    engine.apply_security_alerts(
+        [_FakeAlert(alert_id=1, source_ip="192.168.1.10", severity="high", reason="port scan")]
+    )
+
+    device = engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.security_alert_count == 1
+    assert device.security_max_severity == "high"
+    assert device.security_last_reason == "port scan"
+
+
+def test_apply_security_alerts_ignores_unknown_ips():
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    engine.apply_security_alerts(
+        [_FakeAlert(alert_id=1, source_ip="10.9.9.9", severity="high", reason="unknown host")]
+    )
+
+    assert len(engine.devices) == 1  # no se crea un dispositivo fantasma
+    assert engine.devices["aa:bb:cc:dd:ee:01"].security_alert_count == 0
+
+
+def test_apply_security_alerts_keeps_max_severity_across_multiple_alerts():
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    engine.apply_security_alerts(
+        [
+            _FakeAlert(alert_id=1, source_ip="192.168.1.10", severity="medium", reason="a"),
+            _FakeAlert(alert_id=2, source_ip="192.168.1.10", severity="low", reason="b"),
+        ]
+    )
+
+    device = engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.security_alert_count == 2
+    assert device.security_max_severity == "medium"  # no baja aunque llegue una de menor severidad
+    assert device.security_last_reason == "b"  # pero el motivo sí se actualiza al más reciente

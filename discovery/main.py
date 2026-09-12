@@ -36,6 +36,7 @@ for _extra_path in (REPO_ROOT, REPO_ROOT / "analysis"):
 
 from common.config import settings
 from common.db import get_repository
+from common.netguardian_client import NetGuardianClient
 from device_fingerprint import fingerprint_host, listen_mdns
 from fusion_engine import FusionEngine
 from graph_analysis import analyze
@@ -54,6 +55,15 @@ class Pipeline:
         self.repo = get_repository()
         self.engine = FusionEngine()
         self._passive_capture: PassiveCapture | None = None
+
+        self._netguardian_client: NetGuardianClient | None = None
+        self._last_netguardian_alert_id = 0
+        if settings.netguardian_enabled:
+            self._netguardian_client = NetGuardianClient(
+                base_url=settings.netguardian_api_url,
+                username=settings.netguardian_username,
+                password=settings.netguardian_password,
+            )
 
     def _start_passive_capture(self) -> None:
         if not settings.passive_capture_enabled:
@@ -139,6 +149,25 @@ class Pipeline:
         for mac, device in self.engine.devices.items():
             device.is_authorized = mac.lower() in settings.allowed_devices
 
+    def poll_netguardian_alerts(self) -> None:
+        """Mejora futura ya implementada: integración con NetGuardian.
+
+        Trae las alertas nuevas desde la última vuelta (por id, no por
+        tiempo, para no perder ni duplicar ninguna) y las correlaciona con
+        los dispositivos conocidos. No hace nada si NETGUARDIAN_ENABLED
+        está desactivado.
+        """
+        if self._netguardian_client is None:
+            return
+        alerts = self._netguardian_client.fetch_recent_alerts(
+            since_id=self._last_netguardian_alert_id
+        )
+        if not alerts:
+            return
+        self.engine.apply_security_alerts(alerts)
+        self._last_netguardian_alert_id = max(a.alert_id for a in alerts)
+        logger.info("NetGuardian: %d alerta(s) nueva(s) correlacionada(s)", len(alerts))
+
     def persist_current_state(self) -> None:
         """Fase 6: escribe el estado acumulado del FusionEngine en la BD."""
         devices, relations = self.engine.snapshot()
@@ -166,18 +195,25 @@ class Pipeline:
 
     def run_once(self) -> None:
         self.run_discovery_pass()
+        self.poll_netguardian_alerts()
         self.persist_current_state()
         self.run_analysis_pass()
 
     def run_continuous(self) -> None:
         self._start_passive_capture()
         last_analysis = 0.0
+        last_netguardian_poll = 0.0
         try:
             while True:
                 self.run_discovery_pass()
-                self.persist_current_state()
 
                 now = time.time()
+                if now - last_netguardian_poll >= settings.netguardian_poll_interval_seconds:
+                    self.poll_netguardian_alerts()
+                    last_netguardian_poll = now
+
+                self.persist_current_state()
+
                 if now - last_analysis >= settings.graph_analysis_interval_seconds:
                     self.run_analysis_pass()
                     last_analysis = now

@@ -2,6 +2,13 @@ import cytoscape from "cytoscape";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { colorForType } from "../deviceTypes";
 
+// Color del halo de alerta de seguridad (integración con NetGuardian).
+const SEVERITY_HALO_COLOR = {
+  low: "#fbbf24",
+  medium: "#f97316",
+  high: "#ef4444",
+};
+
 function escapeXml(value) {
   return String(value ?? "").replace(/[<>&'"]/g, (c) => ({
     "<": "&lt;",
@@ -25,6 +32,10 @@ function buildElements(devices, relations) {
       // ALLOWED_DEVICES configurada); si el campo no viene, se asume
       // autorizado para no pintar de "sospechoso" datos antiguos/parciales.
       isAuthorized: d.is_authorized !== false,
+      // Integración con NetGuardian: severidad máxima de alerta reciente.
+      securityMaxSeverity: d.security_max_severity || "none",
+      securityAlertCount: d.security_alert_count || 0,
+      securityLastReason: d.security_last_reason,
     },
   }));
 
@@ -59,6 +70,11 @@ const STYLE = [
       "border-width": (ele) => (ele.data("isAuthorized") === false ? 3 : 2),
       "border-color": (ele) => (ele.data("isAuthorized") === false ? "#ef4444" : "#0f172a"),
       "border-style": (ele) => (ele.data("isAuthorized") === false ? "dashed" : "solid"),
+      // Halo de alerta de seguridad (integración con NetGuardian): un
+      // anillo de color alrededor del nodo, sin ocultar su color de tipo.
+      "overlay-color": (ele) => SEVERITY_HALO_COLOR[ele.data("securityMaxSeverity")] || "transparent",
+      "overlay-opacity": (ele) => (SEVERITY_HALO_COLOR[ele.data("securityMaxSeverity")] ? 0.4 : 0),
+      "overlay-padding": 6,
     },
   },
   {
