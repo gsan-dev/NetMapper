@@ -40,7 +40,8 @@ def _list(name: str, default: list[str] | None = None) -> list[str]:
     return [item.strip() for item in val.split(",") if item.strip()]
 
 
-def _networks(name: str, default: list[str] | None = None) -> list[ipaddress.IPv4Network]:
+def _networks(name: str, default: list[str] | None = None):
+    """Acepta CIDRs IPv4 e IPv6 indistintamente en la misma variable."""
     result = []
     for item in _list(name, default):
         try:
@@ -50,12 +51,15 @@ def _networks(name: str, default: list[str] | None = None) -> list[ipaddress.IPv
     return result
 
 
+def _mac_set(name: str) -> set[str]:
+    """Normaliza una lista de MACs a minúsculas para comparación case-insensitive."""
+    return {mac.lower() for mac in _list(name)}
+
+
 @dataclass
 class Settings:
-    # Descubrimiento de redes
-    allowed_networks: list[ipaddress.IPv4Network] = field(
-        default_factory=lambda: _networks("ALLOWED_NETWORKS")
-    )
+    # Descubrimiento de redes (admite CIDRs IPv4 e IPv6 mezclados)
+    allowed_networks: list = field(default_factory=lambda: _networks("ALLOWED_NETWORKS"))
 
     snmp_enabled: bool = field(default_factory=lambda: _bool("SNMP_ENABLED", False))
     snmp_community: str = os.getenv("SNMP_COMMUNITY", "public")
@@ -116,6 +120,25 @@ class Settings:
         default_factory=lambda: _list("CORS_ORIGINS", ["http://localhost:5174"])
     )
 
+    # Integración con NetGuardian (mejora futura ya implementada): sondea
+    # el backend de NetGuardian para correlacionar sus alertas de
+    # anomalías de red con los dispositivos que NetMapper ya conoce.
+    netguardian_enabled: bool = field(
+        default_factory=lambda: _bool("NETGUARDIAN_ENABLED", False)
+    )
+    netguardian_api_url: str = os.getenv("NETGUARDIAN_API_URL", "http://localhost:8000")
+    netguardian_username: str = os.getenv("NETGUARDIAN_USERNAME", "admin")
+    netguardian_password: str = os.getenv("NETGUARDIAN_PASSWORD", "")
+    netguardian_poll_interval_seconds: int = field(
+        default_factory=lambda: _int("NETGUARDIAN_POLL_INTERVAL_SECONDS", 60)
+    )
+
+    # Detección de dispositivos no autorizados (mejora futura ya
+    # implementada): lista blanca opcional de MACs conocidas. Vacía por
+    # defecto -> nada se marca como no autorizado (evita falsos positivos
+    # hasta que el usuario decide activar la comprobación).
+    allowed_devices: set[str] = field(default_factory=lambda: _mac_set("ALLOWED_DEVICES"))
+
     @property
     def db_path_absolute(self) -> Path:
         path = Path(self.db_path)
@@ -124,10 +147,15 @@ class Settings:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
-    def is_network_allowed(self, network: ipaddress.IPv4Network) -> bool:
-        """True si `network` está cubierta por alguna entrada de ALLOWED_NETWORKS."""
+    def is_network_allowed(self, network) -> bool:
+        """True si `network` está cubierta por alguna entrada de ALLOWED_NETWORKS.
+
+        Compara solo contra entradas de la misma familia (IPv4/IPv6):
+        `subnet_of()` lanza TypeError si se comparan versiones distintas.
+        """
         return any(
-            network.subnet_of(allowed) or network == allowed
+            allowed.version == network.version
+            and (network.subnet_of(allowed) or network == allowed)
             for allowed in self.allowed_networks
         )
 
