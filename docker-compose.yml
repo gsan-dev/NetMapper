@@ -1,0 +1,44 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  discovery:
+    build:
+      context: .
+      dockerfile: discovery/Dockerfile
+    # network_mode: host es necesario para que el pipeline vea las redes
+    # y hosts reales de tu máquina (en una red bridge normal solo vería
+    # la red interna del contenedor). Solo funciona en Linux; en Docker
+    # Desktop (Windows/Mac) el pipeline arrancará pero no descubrirá
+    # nada útil del host real por limitaciones de la propia plataforma.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN # necesario para algunas operaciones de Scapy
+      - NET_RAW   # necesario para ARP scanning y captura pasiva
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8100}
+    ports:
+      - "5174:80"
+    restart: unless-stopped
+    depends_on:
+      - backend
