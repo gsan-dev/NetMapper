@@ -18,6 +18,7 @@ export default function App() {
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [wsStatus, setWsStatus] = useState("desconectado");
   const wsRef = useRef(null);
+  const graphRef = useRef(null);
 
   const loadInitialData = useCallback(async () => {
     const [networksData, graphData, snapshotsData] = await Promise.all([
@@ -63,6 +64,26 @@ export default function App() {
     return devices.filter((d) => (d.subnet_cidrs || []).includes(subnetFilter));
   }, [devices, subnetFilter]);
 
+  function downloadDataUrl(dataUrl, filename) {
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = filename;
+    a.click();
+  }
+
+  function handleExportPng() {
+    const dataUrl = graphRef.current?.exportPng();
+    if (dataUrl) downloadDataUrl(dataUrl, "netmapper-mapa.png");
+  }
+
+  function handleExportGraphml() {
+    const xml = graphRef.current?.exportGraphml();
+    if (!xml) return;
+    const url = URL.createObjectURL(new Blob([xml], { type: "application/xml" }));
+    downloadDataUrl(url, "netmapper-mapa.graphml");
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -76,6 +97,12 @@ export default function App() {
           <span>{filteredDevices.length} dispositivos</span>
           <span>{relations.length} relaciones</span>
           <span>{networks.length} redes</span>
+        </div>
+        <div className="topbar-actions">
+          <button onClick={handleExportPng}>Exportar PNG</button>
+          <button onClick={handleExportGraphml} title="Importable en draw.io: File > Import from > Device">
+            Exportar GraphML
+          </button>
         </div>
       </header>
 
@@ -91,6 +118,7 @@ export default function App() {
 
         <section className="panel graph-panel">
           <NetworkGraph
+            ref={graphRef}
             devices={filteredDevices}
             relations={relations}
             layoutName={layoutName}

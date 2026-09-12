@@ -1,6 +1,16 @@
 import cytoscape from "cytoscape";
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { colorForType } from "../deviceTypes";
+
+function escapeXml(value) {
+  return String(value ?? "").replace(/[<>&'"]/g, (c) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "'": "&apos;",
+    '"': "&quot;",
+  })[c]);
+}
 
 function buildElements(devices, relations) {
   const nodes = devices.map((d) => ({
@@ -65,9 +75,49 @@ const STYLE = [
   },
 ];
 
-export default function NetworkGraph({ devices, relations, layoutName, onSelectDevice }) {
+const NetworkGraph = forwardRef(function NetworkGraph(
+  { devices, relations, layoutName, onSelectDevice },
+  ref
+) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
+
+  useImperativeHandle(ref, () => ({
+    exportPng: () => cyRef.current?.png({ full: true, scale: 2, bg: "#0f172a" }),
+    exportGraphml: () => {
+      const cy = cyRef.current;
+      if (!cy) return "";
+
+      const nodesXml = cy
+        .nodes()
+        .map(
+          (n) =>
+            `    <node id="${escapeXml(n.id())}"><data key="label">${escapeXml(
+              n.data("label")
+            )}</data></node>`
+        )
+        .join("\n");
+
+      const edgesXml = cy
+        .edges()
+        .map(
+          (e) =>
+            `    <edge source="${escapeXml(e.data("source"))}" target="${escapeXml(
+              e.data("target")
+            )}"/>`
+        )
+        .join("\n");
+
+      return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n' +
+        '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">\n' +
+        '  <key id="label" for="node" attr.name="label" attr.type="string"/>\n' +
+        '  <graph id="NetMapper" edgedefault="undirected">\n' +
+        `${nodesXml}\n${edgesXml}\n` +
+        "  </graph>\n</graphml>\n"
+      );
+    },
+  }));
 
   useEffect(() => {
     if (!containerRef.current) return undefined;
@@ -101,4 +151,6 @@ export default function NetworkGraph({ devices, relations, layoutName, onSelectD
   }, [devices, relations, layoutName]);
 
   return <div ref={containerRef} className="graph-canvas" />;
-}
+});
+
+export default NetworkGraph;

@@ -107,6 +107,15 @@ button.active {
   font-variant-numeric: tabular-nums;
 }
 
+.topbar-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.topbar-actions button {
+  font-size: 0.78rem;
+}
+
 /* --- Dashboard grid --- */
 
 .dashboard {
