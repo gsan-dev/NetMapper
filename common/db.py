@@ -115,6 +115,9 @@ class Repository(ABC):
     def get_device_by_mac(self, mac: str) -> dict[str, Any] | None: ...
 
     @abstractmethod
+    def get_device_history(self, mac: str, limit: int = 200) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
     def upsert_relation(self, relation: dict[str, Any]) -> int: ...
 
     @abstractmethod
@@ -246,6 +249,24 @@ class SQLiteRepository(Repository):
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
             return _device_row_to_dict(row) if row else None
+
+    def get_device_history(self, mac: str, limit: int = 200) -> list[dict[str, Any]]:
+        """Reconstruye el histórico de un dispositivo (mejora futura del
+        README: "perfil de huella histórica por dispositivo") a partir de
+        los graph_snapshots en los que apareció, sin necesitar una tabla
+        propia: cada snapshot ya guarda la topología completa de ese
+        momento (ver insert_graph_snapshot). Devuelve, en orden
+        cronológico, el estado del dispositivo (vendor, tipo, puertos...)
+        en cada snapshot donde estuvo presente.
+        """
+        history = []
+        for snapshot in self.list_graph_snapshots(limit=limit):
+            match = next(
+                (d for d in snapshot["devices"] if d.get("mac") == mac), None
+            )
+            if match is not None:
+                history.append({"created_at": snapshot["created_at"], **match})
+        return history
 
     # --- Relaciones ---
 
@@ -380,6 +401,9 @@ class Neo4jRepository(Repository):
         self._not_implemented()
 
     def get_device_by_mac(self, mac: str) -> dict[str, Any] | None:
+        self._not_implemented()
+
+    def get_device_history(self, mac: str, limit: int = 200) -> list[dict[str, Any]]:
         self._not_implemented()
 
     def upsert_relation(self, relation: dict[str, Any]) -> int:

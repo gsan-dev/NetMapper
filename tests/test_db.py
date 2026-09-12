@@ -95,6 +95,55 @@ def test_get_device_by_mac_returns_none_when_missing(repo):
     assert repo.get_device_by_mac("zz:zz:zz:zz:zz:zz") is None
 
 
+def test_get_device_history_reconstructs_from_snapshots(repo):
+    mac = "aa:bb:cc:dd:ee:01"
+    other_mac = "aa:bb:cc:dd:ee:02"
+
+    repo.insert_graph_snapshot(
+        {
+            "created_at": 1000.0,
+            "node_count": 1,
+            "edge_count": 0,
+            "communities": {},
+            "centrality": {},
+            "layers": {},
+            "devices": [{"mac": mac, "device_type": "unknown", "vendor": None}],
+            "relations": [],
+        }
+    )
+    repo.insert_graph_snapshot(
+        {
+            "created_at": 2000.0,
+            "node_count": 2,
+            "edge_count": 0,
+            "communities": {},
+            "centrality": {},
+            "layers": {},
+            # el dispositivo cambia de tipo (fingerprint más preciso con el tiempo)
+            # y aparece uno nuevo que no debe colarse en el histórico del primero
+            "devices": [
+                {"mac": mac, "device_type": "nas", "vendor": "Synology Incorporated"},
+                {"mac": other_mac, "device_type": "printer", "vendor": "Canon"},
+            ],
+            "relations": [],
+        }
+    )
+
+    history = repo.get_device_history(mac)
+
+    assert len(history) == 2
+    assert history[0]["created_at"] == 1000.0
+    assert history[0]["device_type"] == "unknown"
+    assert history[1]["created_at"] == 2000.0
+    assert history[1]["device_type"] == "nas"
+    assert history[1]["vendor"] == "Synology Incorporated"
+    assert all(h["mac"] == mac for h in history)
+
+
+def test_get_device_history_empty_when_never_seen(repo):
+    assert repo.get_device_history("zz:zz:zz:zz:zz:zz") == []
+
+
 def test_upsert_relation_replaces_totals_not_adds(repo):
     id1 = repo.upsert_relation(
         {"src_mac": "aa:bb:cc:dd:ee:01", "dst_mac": "aa:bb:cc:dd:ee:02", "bytes_total": 100, "connections": 1}

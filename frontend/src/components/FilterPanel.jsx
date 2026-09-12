@@ -1,5 +1,25 @@
 import { DEVICE_COLORS, DEVICE_LABELS } from "../deviceTypes";
 
+function formatDate(ts) {
+  return new Date(ts * 1000).toLocaleString();
+}
+
+/** Colapsa el histórico a solo los puntos donde cambió el tipo o el
+ * fabricante — ver el mismo estado repetido en cada snapshot no aporta
+ * nada, lo interesante es cuándo cambió. */
+function deviceTypeTransitions(history) {
+  const transitions = [];
+  let lastKey = null;
+  for (const entry of history) {
+    const key = `${entry.device_type}|${entry.vendor || ""}`;
+    if (key !== lastKey) {
+      transitions.push(entry);
+      lastKey = key;
+    }
+  }
+  return transitions;
+}
+
 export default function FilterPanel({
   networks,
   subnetFilter,
@@ -7,7 +27,10 @@ export default function FilterPanel({
   layoutName,
   onLayoutChange,
   selectedDevice,
+  deviceHistory = [],
 }) {
+  const transitions = deviceTypeTransitions(deviceHistory);
+  const firstSeen = deviceHistory[0]?.created_at;
   return (
     <section className="panel filter-panel">
       <h2>Filtros</h2>
@@ -77,6 +100,26 @@ export default function FilterPanel({
               )}
             </dd>
           </dl>
+
+          {firstSeen && (
+            <div className="device-history">
+              <p className="first-seen">Visto por primera vez: {formatDate(firstSeen)}</p>
+              {transitions.length > 1 && (
+                <>
+                  <p className="history-label">Historial de tipo/fabricante</p>
+                  <ul className="history-list">
+                    {transitions.map((t, i) => (
+                      <li key={i}>
+                        <span className="history-date">{formatDate(t.created_at)}</span>{" "}
+                        {DEVICE_LABELS[t.device_type] || t.device_type}
+                        {t.vendor ? ` — ${t.vendor}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

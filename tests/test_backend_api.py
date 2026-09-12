@@ -104,6 +104,36 @@ def test_get_device_by_mac_returns_device(client):
     assert response.json()["mac"] == "aa:bb:cc:dd:ee:01"
 
 
+def test_get_device_history_returns_snapshot_states(client):
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.insert_graph_snapshot(
+        {
+            "created_at": time.time(),
+            "node_count": 1,
+            "edge_count": 0,
+            "communities": {},
+            "centrality": {},
+            "layers": {},
+            "devices": [{"mac": "aa:bb:cc:dd:ee:01", "device_type": "nas", "vendor": "Synology"}],
+            "relations": [],
+        }
+    )
+
+    response = client.get("/api/devices/aa:bb:cc:dd:ee:01/history")
+    assert response.status_code == 200
+    history = response.json()
+    assert len(history) == 1
+    assert history[0]["device_type"] == "nas"
+
+
+def test_get_device_history_empty_for_unknown_mac(client):
+    response = client.get("/api/devices/zz:zz:zz:zz:zz:zz/history")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def test_graph_endpoint_combines_devices_relations_and_snapshot(client):
     from common.db import get_repository
 

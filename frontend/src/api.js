@@ -28,6 +28,10 @@ export function fetchSnapshots(limit = 100) {
   return getJson(`/api/graph/snapshots?limit=${limit}`);
 }
 
+export function fetchDeviceHistory(mac, limit = 200) {
+  return getJson(`/api/devices/${encodeURIComponent(mac)}/history?limit=${limit}`);
+}
+
 export function connectWebSocket({ onMessage, onOpen, onClose }) {
   const ws = new WebSocket(`${WS_BASE_URL}/ws`);
   ws.onopen = () => onOpen && onOpen();

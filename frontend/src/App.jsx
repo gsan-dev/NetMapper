@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import FilterPanel from "./components/FilterPanel";
 import NetworkGraph from "./components/NetworkGraph";
 import TimelapseControls from "./components/TimelapseControls";
-import { connectWebSocket, fetchGraph, fetchNetworks, fetchSnapshots } from "./api";
+import {
+  connectWebSocket,
+  fetchDeviceHistory,
+  fetchGraph,
+  fetchNetworks,
+  fetchSnapshots,
+} from "./api";
 
 const MAX_SNAPSHOTS = 200;
 
@@ -16,6 +22,7 @@ export default function App() {
   const [subnetFilter, setSubnetFilter] = useState("");
   const [layoutName, setLayoutName] = useState("force");
   const [selectedDevice, setSelectedDevice] = useState(null);
+  const [deviceHistory, setDeviceHistory] = useState([]);
   const [wsStatus, setWsStatus] = useState("desconectado");
   const wsRef = useRef(null);
   const graphRef = useRef(null);
@@ -68,6 +75,22 @@ export default function App() {
     () => filteredDevices.filter((d) => d.is_authorized === false).length,
     [filteredDevices]
   );
+
+  useEffect(() => {
+    if (!selectedDevice) {
+      setDeviceHistory([]);
+      return;
+    }
+    let cancelled = false;
+    fetchDeviceHistory(selectedDevice.id)
+      .then((history) => {
+        if (!cancelled) setDeviceHistory(history);
+      })
+      .catch((err) => console.error("Error cargando histórico del dispositivo", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDevice]);
 
   function downloadDataUrl(dataUrl, filename) {
     const a = document.createElement("a");
@@ -122,6 +145,7 @@ export default function App() {
           layoutName={layoutName}
           onLayoutChange={setLayoutName}
           selectedDevice={selectedDevice}
+          deviceHistory={deviceHistory}
         />
 
         <section className="panel graph-panel">
