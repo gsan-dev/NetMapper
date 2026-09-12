@@ -40,14 +40,23 @@ except ImportError:  # pragma: no cover - pyroute2 es Linux-only
     _PYROUTE2_AVAILABLE = False
 
 try:
-    from pysnmp.hlapi.v3arch.asyncio import (
+    # pysnmp reorganizó su hlapi asíncrono entre 6.1.x y 6.2.x: la ruta
+    # "pysnmp.hlapi.v3arch.asyncio" (con nombres snake_case como
+    # "walk_cmd") desapareció en favor de "pysnmp.hlapi.asyncio" con
+    # nombres camelCase ("walkCmd") — como discovery/requirements.txt fija
+    # ">=6.1,<7.0", pip resuelve hoy 6.2.x y el import viejo fallaba en
+    # silencio (se capturaba como "pysnmp no disponible" y el
+    # descubrimiento SNMP quedaba desactivado sin avisar). Ver también:
+    # UdpTransportTarget ya no se construye con un ".create()" async, es
+    # un constructor síncrono normal en esta versión.
+    from pysnmp.hlapi.asyncio import (
         CommunityData,
         ContextData,
         ObjectIdentity,
         ObjectType,
         SnmpEngine,
         UdpTransportTarget,
-        walk_cmd,
+        walkCmd,
     )
 
     _PYSNMP_AVAILABLE = True
@@ -226,11 +235,9 @@ async def discover_router_networks_async(
     subnets: list[Subnet] = []
     try:
         engine = SnmpEngine()
-        transport = await UdpTransportTarget.create(
-            (router_ip, 161), timeout=timeout, retries=1
-        )
+        transport = UdpTransportTarget((router_ip, 161), timeout=timeout, retries=1)
         all_binds = []
-        async for error_indication, error_status, _error_index, var_binds in walk_cmd(
+        async for error_indication, error_status, _error_index, var_binds in walkCmd(
             engine,
             CommunityData(community, mpModel=0),
             transport,

@@ -1,6 +1,8 @@
 """Pruebas del descubrimiento de redes (Fase 0)."""
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import network_discovery as nd
 
 
@@ -239,6 +241,48 @@ def test_discover_networks_merges_with_router_priority():
     assert len(subnets) == 2
     assert by_cidr["192.168.1.0/24"].discovery_method == "router"  # gana SNMP
     assert by_cidr["10.0.0.0/24"].discovery_method == "route"
+
+
+@pytest.mark.asyncio
+async def test_discover_router_networks_async_walks_and_parses_ipaddrtable():
+    # Regresión real: pysnmp reorganizó su hlapi asíncrono entre
+    # versiones (pysnmp.hlapi.v3arch.asyncio.walk_cmd en 6.1.x vs.
+    # pysnmp.hlapi.asyncio.walkCmd en 6.2.x) y el import roto se
+    # tragaba en silencio como "pysnmp no disponible" — este test
+    # ejercita la ruta real (import + firma de walkCmd) para que un
+    # cambio de API futuro falle aquí, no en un despliegue real.
+    async def fake_walk_cmd(*args, **kwargs):
+        yield (None, None, 0, [(f"{nd.IP_ADDR_TABLE_NETMASK_OID}.192.168.1.1", "255.255.255.0")])
+
+    with patch.object(nd, "_PYSNMP_AVAILABLE", True), patch.object(
+        nd, "SnmpEngine", return_value=MagicMock()
+    ), patch.object(nd, "UdpTransportTarget", return_value=MagicMock()), patch.object(
+        nd, "CommunityData", return_value=MagicMock()
+    ), patch.object(nd, "ContextData", return_value=MagicMock()), patch.object(
+        nd, "walkCmd", side_effect=fake_walk_cmd
+    ):
+        subnets = await nd.discover_router_networks_async("192.168.0.1", community="public")
+
+    assert len(subnets) == 1
+    assert subnets[0].cidr == "192.168.1.0/24"
+    assert subnets[0].discovery_method == "router"
+
+
+@pytest.mark.asyncio
+async def test_discover_router_networks_async_returns_empty_on_error_indication():
+    async def fake_walk_cmd(*args, **kwargs):
+        yield ("timeout", None, 0, [])
+
+    with patch.object(nd, "_PYSNMP_AVAILABLE", True), patch.object(
+        nd, "SnmpEngine", return_value=MagicMock()
+    ), patch.object(nd, "UdpTransportTarget", return_value=MagicMock()), patch.object(
+        nd, "CommunityData", return_value=MagicMock()
+    ), patch.object(nd, "ContextData", return_value=MagicMock()), patch.object(
+        nd, "walkCmd", side_effect=fake_walk_cmd
+    ):
+        subnets = await nd.discover_router_networks_async("192.168.0.1")
+
+    assert subnets == []
 
 
 def test_discover_networks_skips_snmp_when_disabled():
