@@ -64,6 +64,10 @@ class Device:
     security_alert_count: int = 0
     security_max_severity: str = "none"
     security_last_reason: str | None = None
+    # Mejora futura ya implementada: detección de ARP/DHCP spoofing.
+    # Distingue de dónde viene la última alerta (reusa los mismos
+    # campos security_* de arriba en vez de duplicarlos por fuente).
+    security_alert_source: str = "none"
 
     def to_dict(self) -> dict:
         return {
@@ -84,6 +88,7 @@ class Device:
             "security_alert_count": self.security_alert_count,
             "security_max_severity": self.security_max_severity,
             "security_last_reason": self.security_last_reason,
+            "security_alert_source": self.security_alert_source,
         }
 
 
@@ -213,6 +218,29 @@ class FusionEngine:
             if is_higher_severity(alert.severity, device.security_max_severity):
                 device.security_max_severity = alert.severity
             device.security_last_reason = alert.reason
+            device.security_alert_source = "netguardian"
+
+    def apply_arp_spoof_alert(self, alert) -> None:
+        """Mejora futura ya implementada: detección de ARP/DHCP spoofing.
+
+        Con solo ARP no hay forma de saber cuál de las dos MACs en
+        conflicto es la legítima, así que se marca a AMBOS dispositivos
+        conocidos (si existen) en vez de arriesgarse a señalar al
+        inocente — el usuario decide cuál investigar.
+        """
+        reason = (
+            f"IP {alert.ip} reclamada por {alert.known_mac} y {alert.new_mac} "
+            "(posible ARP/DHCP spoofing)"
+        )
+        for mac in (alert.known_mac, alert.new_mac):
+            device = self.devices.get(mac)
+            if device is None:
+                continue
+            device.security_alert_count += 1
+            if is_higher_severity("high", device.security_max_severity):
+                device.security_max_severity = "high"
+            device.security_last_reason = reason
+            device.security_alert_source = "local-arp"
 
     def set_cve_findings(self, mac: str, findings_by_port: dict[int, list]) -> None:
         """Mejora futura ya implementada: correlación con CVEs (NVD).

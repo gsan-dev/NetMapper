@@ -4,6 +4,11 @@ function formatDate(ts) {
   return new Date(ts * 1000).toLocaleString();
 }
 
+const SECURITY_SOURCE_LABELS = {
+  netguardian: "NetGuardian",
+  "local-arp": "ARP/DHCP local",
+};
+
 /** Colapsa el histórico a solo los puntos donde cambió el tipo o el
  * fabricante — ver el mismo estado repetido en cada snapshot no aporta
  * nada, lo interesante es cuándo cambió. */
@@ -124,10 +129,14 @@ export default function FilterPanel({
             </dd>
             {selectedDevice.securityMaxSeverity && selectedDevice.securityMaxSeverity !== "none" && (
               <>
-                <dt>Alertas (NetGuardian)</dt>
+                <dt>Alertas de seguridad</dt>
                 <dd>
                   <span className={`severity-badge severity-${selectedDevice.securityMaxSeverity}`}>
                     {selectedDevice.securityAlertCount} · {selectedDevice.securityMaxSeverity}
+                  </span>
+                  {" "}
+                  <span className="security-source">
+                    {SECURITY_SOURCE_LABELS[selectedDevice.securityAlertSource] || ""}
                   </span>
                   {selectedDevice.securityLastReason && (
                     <div className="security-reason">{selectedDevice.securityLastReason}</div>

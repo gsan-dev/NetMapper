@@ -42,10 +42,12 @@ function buildElements(devices, relations, groupBySubnet) {
         // ALLOWED_DEVICES configurada); si el campo no viene, se asume
         // autorizado para no pintar de "sospechoso" datos antiguos/parciales.
         isAuthorized: d.is_authorized !== false,
-        // Integración con NetGuardian: severidad máxima de alerta reciente.
+        // Alertas de seguridad: de NetGuardian o detectadas localmente
+        // (ARP/DHCP spoofing) — mismo modelo de datos, distinta fuente.
         securityMaxSeverity: d.security_max_severity || "none",
         securityAlertCount: d.security_alert_count || 0,
         securityLastReason: d.security_last_reason,
+        securityAlertSource: d.security_alert_source || "none",
         // Nodo compuesto (grupo visual por subred): solo se asigna si el
         // modo "agrupar por subred" está activo y el dispositivo tiene
         // una subred conocida — Cytoscape ignora `parent` si es undefined.

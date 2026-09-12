@@ -1,9 +1,17 @@
 """Pruebas de la captura pasiva y agregación por ventanas (Fase 3)."""
 import time
 
-from scapy.all import DNS, DNSQR, IP, UDP, Ether, IPv6, Raw
+from scapy.all import ARP, DNS, DNSQR, IP, UDP, Ether, IPv6, Raw
 
-from passive_capture import Edge, PacketObservation, PassiveCapture, WindowAggregator, parse_packet
+from passive_capture import (
+    ArpWatcher,
+    Edge,
+    PacketObservation,
+    PassiveCapture,
+    WindowAggregator,
+    parse_arp_packet,
+    parse_packet,
+)
 
 
 def test_parse_packet_plain_ip():
@@ -102,3 +110,86 @@ def test_passive_capture_handle_packet_feeds_aggregator():
     capture._handle_packet(pkt)
 
     assert len(capture.aggregator) == 1
+
+
+def test_passive_capture_defaults_to_ip_only_filter():
+    capture = PassiveCapture(interface="lo", window_seconds=10, on_window=lambda *a: None)
+    assert capture.bpf_filter == "ip"
+
+
+def test_passive_capture_uses_ip_or_arp_filter_when_arp_detection_enabled():
+    capture = PassiveCapture(
+        interface="lo",
+        window_seconds=10,
+        on_window=lambda *a: None,
+        arp_spoof_detection_enabled=True,
+    )
+    assert capture.bpf_filter == "ip or arp"
+
+
+def test_parse_arp_packet_extracts_ip_and_mac():
+    pkt = Ether() / ARP(op=2, psrc="192.168.1.10", hwsrc="aa:bb:cc:dd:ee:01")
+    claim = parse_arp_packet(pkt)
+
+    assert claim is not None
+    assert claim.ip == "192.168.1.10"
+    assert claim.mac == "aa:bb:cc:dd:ee:01"
+
+
+def test_parse_arp_packet_returns_none_for_non_arp():
+    assert parse_arp_packet(Ether() / IP(src="10.0.0.5", dst="10.0.0.1")) is None
+
+
+def test_arp_watcher_ignores_first_claim_and_repeated_claims():
+    watcher = ArpWatcher()
+    assert watcher.observe(_arp_claim("192.168.1.10", "aa:bb:cc:dd:ee:01")) is None
+    assert watcher.observe(_arp_claim("192.168.1.10", "aa:bb:cc:dd:ee:01")) is None
+
+
+def test_arp_watcher_flags_ip_claimed_by_different_mac():
+    watcher = ArpWatcher()
+    watcher.observe(_arp_claim("192.168.1.10", "aa:bb:cc:dd:ee:01"))
+
+    alert = watcher.observe(_arp_claim("192.168.1.10", "ff:ff:ff:ff:ff:ff"), now=123.0)
+
+    assert alert is not None
+    assert alert.ip == "192.168.1.10"
+    assert alert.known_mac == "aa:bb:cc:dd:ee:01"
+    assert alert.new_mac == "ff:ff:ff:ff:ff:ff"
+    assert alert.detected_at == 123.0
+
+
+def _arp_claim(ip, mac):
+    from passive_capture import ArpClaim
+
+    return ArpClaim(ip=ip, mac=mac)
+
+
+def test_passive_capture_reports_arp_spoof_alert_via_callback():
+    alerts_received = []
+    capture = PassiveCapture(
+        interface="lo",
+        window_seconds=10,
+        on_window=lambda *a: None,
+        arp_spoof_detection_enabled=True,
+        on_arp_spoof_alert=alerts_received.append,
+    )
+
+    claim_pkt = Ether() / ARP(op=2, psrc="192.168.1.10", hwsrc="aa:bb:cc:dd:ee:01")
+    spoof_pkt = Ether() / ARP(op=2, psrc="192.168.1.10", hwsrc="ff:ff:ff:ff:ff:ff")
+
+    capture._handle_packet(claim_pkt)
+    capture._handle_packet(spoof_pkt)
+
+    assert len(alerts_received) == 1
+    assert alerts_received[0].known_mac == "aa:bb:cc:dd:ee:01"
+    assert alerts_received[0].new_mac == "ff:ff:ff:ff:ff:ff"
+
+
+def test_passive_capture_skips_arp_watching_when_disabled():
+    capture = PassiveCapture(interface="lo", window_seconds=10, on_window=lambda *a: None)
+    pkt = Ether() / ARP(op=2, psrc="192.168.1.10", hwsrc="aa:bb:cc:dd:ee:01")
+
+    capture._handle_packet(pkt)  # no debe lanzar aunque no haya watcher activo
+
+    assert capture._arp_watcher is None

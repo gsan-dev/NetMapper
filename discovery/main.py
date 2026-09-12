@@ -79,6 +79,8 @@ class Pipeline:
             interface=settings.passive_capture_interface,
             window_seconds=settings.passive_capture_window_seconds,
             on_window=on_window,
+            arp_spoof_detection_enabled=settings.arp_spoof_detection_enabled,
+            on_arp_spoof_alert=self.engine.apply_arp_spoof_alert,
         )
         self._passive_capture.start()
 

@@ -171,6 +171,13 @@ button.active {
   font-size: 0.75rem;
 }
 
+.security-source {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .topbar-actions {
   display: flex;
   gap: 0.5rem;

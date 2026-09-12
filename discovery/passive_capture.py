@@ -9,6 +9,10 @@ También extrae las consultas DNS resueltas por cada IP origen: qué
 dominios resuelve un dispositivo es una pista de fingerprinting
 gratuita (p. ej. un dispositivo que solo resuelve dominios de Apple
 probablemente sea un iPhone/Mac).
+
+Mejora futura ya implementada: detección de ARP/DHCP spoofing
+(`ArpWatcher`) — vigila si una misma IP es reclamada por MACs
+distintas en tramas ARP, señal habitual de un ataque de suplantación.
 """
 from __future__ import annotations
 
@@ -33,6 +37,11 @@ try:
     from scapy.all import IPv6
 except ImportError:  # pragma: no cover
     IPv6 = None  # noqa: N816
+
+try:
+    from scapy.all import ARP
+except ImportError:  # pragma: no cover
+    ARP = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +145,61 @@ class WindowAggregator:
 WindowCallback = Callable[[float, float, list[Edge], dict[str, dict[str, int]]], None]
 
 
+@dataclass(frozen=True)
+class ArpClaim:
+    ip: str
+    mac: str
+
+
+def parse_arp_packet(pkt) -> ArpClaim | None:
+    """Extrae (IP, MAC) reclamada de un paquete ARP (who-has o is-at).
+
+    Tanto una petición ("who-has") como una respuesta ("is-at") declaran
+    qué MAC dice tener `psrc` — suficiente para detectar conflictos sin
+    esperar a que alguien responda.
+    """
+    if ARP is None or ARP not in pkt:
+        return None
+    arp = pkt[ARP]
+    if arp.op not in (1, 2) or not arp.psrc or not arp.hwsrc:
+        return None
+    return ArpClaim(ip=arp.psrc, mac=arp.hwsrc.lower())
+
+
+@dataclass(frozen=True)
+class ArpSpoofAlert:
+    ip: str
+    known_mac: str
+    new_mac: str
+    detected_at: float = field(default_factory=time.time)
+
+
+class ArpWatcher:
+    """Detecta la misma IP reclamada por MACs distintas (mejora futura ya
+    implementada: detección de ARP/DHCP spoofing).
+
+    No hay forma de saber, solo observando ARP, cuál de las dos MACs es
+    la legítima y cuál la que suplanta — se limita a reportar el
+    conflicto; la decisión de investigar es del usuario.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.ip_to_mac: dict[str, str] = {}
+
+    def observe(self, claim: ArpClaim, now: float | None = None) -> ArpSpoofAlert | None:
+        now = now if now is not None else time.time()
+        with self._lock:
+            known_mac = self.ip_to_mac.get(claim.ip)
+            if known_mac is None or known_mac == claim.mac:
+                self.ip_to_mac[claim.ip] = claim.mac
+                return None
+            self.ip_to_mac[claim.ip] = claim.mac
+            return ArpSpoofAlert(
+                ip=claim.ip, known_mac=known_mac, new_mac=claim.mac, detected_at=now
+            )
+
+
 class PassiveCapture:
     """Captura pasiva en vivo con Scapy; entrega cada ventana cerrada vía callback."""
 
@@ -144,12 +208,21 @@ class PassiveCapture:
         interface: str,
         window_seconds: int,
         on_window: WindowCallback,
-        bpf_filter: str = "ip",
+        bpf_filter: str | None = None,
+        arp_spoof_detection_enabled: bool = False,
+        on_arp_spoof_alert: Callable[[ArpSpoofAlert], None] | None = None,
     ):
         self.interface = interface
         self.on_window = on_window
         self.aggregator = WindowAggregator(window_seconds)
-        self.bpf_filter = bpf_filter
+        self.on_arp_spoof_alert = on_arp_spoof_alert
+        self._arp_watcher = ArpWatcher() if arp_spoof_detection_enabled else None
+        if bpf_filter is not None:
+            self.bpf_filter = bpf_filter
+        else:
+            # Sin detección de spoofing no hace falta capturar ARP:
+            # menos carga de captura para lo que de verdad se usa.
+            self.bpf_filter = "ip or arp" if arp_spoof_detection_enabled else "ip"
         self._sniffer: AsyncSniffer | None = None
         self._timer_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -158,6 +231,16 @@ class PassiveCapture:
         obs = parse_packet(pkt)
         if obs is not None:
             self.aggregator.add(obs)
+
+        if self._arp_watcher is not None:
+            claim = parse_arp_packet(pkt)
+            if claim is not None:
+                alert = self._arp_watcher.observe(claim)
+                if alert is not None and self.on_arp_spoof_alert is not None:
+                    try:
+                        self.on_arp_spoof_alert(alert)
+                    except Exception:
+                        logger.exception("Error procesando alerta de ARP spoofing")
 
     def _timer_loop(self) -> None:
         while not self._stop_event.is_set():

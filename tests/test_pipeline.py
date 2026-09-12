@@ -249,6 +249,8 @@ def test_start_passive_capture_starts_when_enabled(pipeline, pipeline_module):
 
     mock_capture_cls.assert_called_once()
     mock_capture_cls.return_value.start.assert_called_once()
+    assert mock_capture_cls.call_args.kwargs["arp_spoof_detection_enabled"] == settings.arp_spoof_detection_enabled
+    assert mock_capture_cls.call_args.kwargs["on_arp_spoof_alert"] == pipeline.engine.apply_arp_spoof_alert
 
 
 def test_pipeline_does_not_create_netguardian_client_when_disabled(pipeline):

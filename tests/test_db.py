@@ -93,6 +93,14 @@ def test_upsert_device_defaults_security_fields_to_none_severity(repo):
     assert device["security_alert_count"] == 0
     assert device["security_max_severity"] == "none"
     assert device["security_last_reason"] is None
+    assert device["security_alert_source"] == "none"
+
+
+def test_upsert_device_persists_security_alert_source(repo):
+    repo.upsert_device(_device(security_alert_source="local-arp"))
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["security_alert_source"] == "local-arp"
 
 
 def test_upsert_device_keeps_vendor_when_new_value_is_none(repo):

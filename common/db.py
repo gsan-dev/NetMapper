@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS devices (
     security_alert_count INTEGER NOT NULL DEFAULT 0,
     security_max_severity TEXT NOT NULL DEFAULT 'none',
     security_last_reason TEXT,
+    security_alert_source TEXT NOT NULL DEFAULT 'none',
     last_sensor_id TEXT
 );
 
@@ -243,8 +244,8 @@ class SQLiteRepository(Repository):
                     service_banners, tls_certificates, cve_findings, dns_queries, subnet_cidrs,
                     first_seen, last_seen, active,
                     is_authorized, security_alert_count, security_max_severity,
-                    security_last_reason, last_sensor_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                    security_last_reason, security_alert_source, last_sensor_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
@@ -262,6 +263,7 @@ class SQLiteRepository(Repository):
                     security_alert_count = excluded.security_alert_count,
                     security_max_severity = excluded.security_max_severity,
                     security_last_reason = excluded.security_last_reason,
+                    security_alert_source = excluded.security_alert_source,
                     last_sensor_id = excluded.last_sensor_id
                 """,
                 (
@@ -282,6 +284,7 @@ class SQLiteRepository(Repository):
                     device.get("security_alert_count", 0),
                     device.get("security_max_severity", "none"),
                     device.get("security_last_reason"),
+                    device.get("security_alert_source", "none"),
                     device.get("last_sensor_id"),
                 ),
             )

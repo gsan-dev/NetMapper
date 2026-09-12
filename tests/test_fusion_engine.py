@@ -211,6 +211,52 @@ def test_apply_security_alerts_ignores_unknown_ips():
     assert engine.devices["aa:bb:cc:dd:ee:01"].security_alert_count == 0
 
 
+def test_apply_arp_spoof_alert_flags_both_devices():
+    from passive_capture import ArpSpoofAlert
+
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+    engine.ingest_host(_host("192.168.1.20", "ff:ff:ff:ff:ff:ff"), "192.168.1.0/24")
+
+    engine.apply_arp_spoof_alert(
+        ArpSpoofAlert(
+            ip="192.168.1.10", known_mac="aa:bb:cc:dd:ee:01", new_mac="ff:ff:ff:ff:ff:ff", detected_at=1.0
+        )
+    )
+
+    known = engine.devices["aa:bb:cc:dd:ee:01"]
+    new = engine.devices["ff:ff:ff:ff:ff:ff"]
+    assert known.security_alert_count == 1
+    assert known.security_max_severity == "high"
+    assert known.security_alert_source == "local-arp"
+    assert new.security_alert_count == 1
+    assert new.security_max_severity == "high"
+    assert new.security_alert_source == "local-arp"
+    assert "192.168.1.10" in known.security_last_reason
+
+
+def test_apply_arp_spoof_alert_ignores_unknown_macs():
+    from passive_capture import ArpSpoofAlert
+
+    engine = FusionEngine()
+    engine.apply_arp_spoof_alert(
+        ArpSpoofAlert(ip="10.0.0.5", known_mac="aa:aa:aa:aa:aa:aa", new_mac="bb:bb:bb:bb:bb:bb")
+    )
+
+    assert len(engine.devices) == 0
+
+
+def test_apply_security_alerts_sets_netguardian_source():
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    engine.apply_security_alerts(
+        [_FakeAlert(alert_id=1, source_ip="192.168.1.10", severity="high", reason="port scan")]
+    )
+
+    assert engine.devices["aa:bb:cc:dd:ee:01"].security_alert_source == "netguardian"
+
+
 def test_set_cve_findings_replaces_previous_findings():
     engine = FusionEngine()
     engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
