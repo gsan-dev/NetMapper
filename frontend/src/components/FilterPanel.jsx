@@ -144,6 +144,15 @@ export default function FilterPanel({
                 </dd>
               </>
             )}
+            {selectedDevice.physicalNeighbor && (
+              <>
+                <dt>Vecino físico (LLDP)</dt>
+                <dd>
+                  {selectedDevice.physicalNeighbor.system_name || "—"}
+                  {selectedDevice.physicalNeighbor.port_id && ` · puerto ${selectedDevice.physicalNeighbor.port_id}`}
+                </dd>
+              </>
+            )}
           </dl>
 
           {firstSeen && (

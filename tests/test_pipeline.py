@@ -251,6 +251,28 @@ def test_start_passive_capture_starts_when_enabled(pipeline, pipeline_module):
     mock_capture_cls.return_value.start.assert_called_once()
     assert mock_capture_cls.call_args.kwargs["arp_spoof_detection_enabled"] == settings.arp_spoof_detection_enabled
     assert mock_capture_cls.call_args.kwargs["on_arp_spoof_alert"] == pipeline.engine.apply_arp_spoof_alert
+    assert mock_capture_cls.call_args.kwargs["lldp_discovery_enabled"] == settings.lldp_discovery_enabled
+
+
+def test_apply_lldp_neighbors_noop_without_passive_capture(pipeline):
+    pipeline._passive_capture = None
+    pipeline._apply_lldp_neighbors()  # no debe fallar aunque no haya captura activa
+
+
+def test_apply_lldp_neighbors_ingests_from_passive_capture(pipeline):
+    from passive_capture import LldpNeighbor
+
+    pipeline.engine.ingest_host(_host(ip="192.168.1.1", mac="aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+    fake_capture = MagicMock()
+    fake_capture.get_lldp_neighbors.return_value = [
+        LldpNeighbor(mac="aa:bb:cc:dd:ee:01", chassis_id="aa:bb:cc:dd:ee:01", port_id="Gi0/1", system_name="switch01")
+    ]
+    pipeline._passive_capture = fake_capture
+
+    pipeline._apply_lldp_neighbors()
+
+    device = pipeline.engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.physical_neighbor["system_name"] == "switch01"
 
 
 def test_pipeline_does_not_create_netguardian_client_when_disabled(pipeline):

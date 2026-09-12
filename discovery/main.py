@@ -81,8 +81,17 @@ class Pipeline:
             on_window=on_window,
             arp_spoof_detection_enabled=settings.arp_spoof_detection_enabled,
             on_arp_spoof_alert=self.engine.apply_arp_spoof_alert,
+            lldp_discovery_enabled=settings.lldp_discovery_enabled,
         )
         self._passive_capture.start()
+
+    def _apply_lldp_neighbors(self) -> None:
+        """Mejora futura ya implementada: topología física parcial vía LLDP."""
+        if self._passive_capture is None:
+            return
+        neighbors = self._passive_capture.get_lldp_neighbors()
+        if neighbors:
+            self.engine.apply_lldp_neighbors(neighbors)
 
     def run_discovery_pass(self, device_stale_after_seconds: float | None = None) -> None:
         """Fases 0-1-2-4: descubre redes, hosts, los caracteriza y fusiona.
@@ -270,6 +279,8 @@ class Pipeline:
                 if now - last_cve_lookup >= settings.cve_lookup_interval_seconds:
                     self.run_cve_lookup_pass()
                     last_cve_lookup = now
+
+                self._apply_lldp_neighbors()
 
                 self.persist_current_state()
 

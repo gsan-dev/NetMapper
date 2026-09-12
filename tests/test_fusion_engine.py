@@ -246,6 +246,36 @@ def test_apply_arp_spoof_alert_ignores_unknown_macs():
     assert len(engine.devices) == 0
 
 
+def test_apply_lldp_neighbors_enriches_known_device():
+    from passive_capture import LldpNeighbor
+
+    engine = FusionEngine()
+    engine.ingest_host(_host("192.168.1.1", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")
+
+    engine.apply_lldp_neighbors(
+        [LldpNeighbor(mac="aa:bb:cc:dd:ee:01", chassis_id="aa:bb:cc:dd:ee:01", port_id="Gi0/1", system_name="switch01")]
+    )
+
+    device = engine.devices["aa:bb:cc:dd:ee:01"]
+    assert device.physical_neighbor == {
+        "chassis_id": "aa:bb:cc:dd:ee:01",
+        "port_id": "Gi0/1",
+        "system_name": "switch01",
+    }
+    assert device.to_dict()["physical_neighbor"]["system_name"] == "switch01"
+
+
+def test_apply_lldp_neighbors_ignores_unknown_macs():
+    from passive_capture import LldpNeighbor
+
+    engine = FusionEngine()
+    engine.apply_lldp_neighbors(
+        [LldpNeighbor(mac="zz:zz:zz:zz:zz:zz", chassis_id=None, port_id=None, system_name=None)]
+    )
+
+    assert len(engine.devices) == 0
+
+
 def test_apply_security_alerts_sets_netguardian_source():
     engine = FusionEngine()
     engine.ingest_host(_host("192.168.1.10", "aa:bb:cc:dd:ee:01"), "192.168.1.0/24")

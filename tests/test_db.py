@@ -160,6 +160,20 @@ def test_upsert_device_defaults_new_json_fields_to_empty(repo):
     assert device["service_banners"] == {}
     assert device["tls_certificates"] == {}
     assert device["cve_findings"] == {}
+    assert device["physical_neighbor"] is None
+
+
+def test_upsert_device_round_trips_physical_neighbor(repo):
+    repo.upsert_device(
+        _device(physical_neighbor={"chassis_id": "aa:bb:cc:dd:ee:01", "port_id": "Gi0/1", "system_name": "switch01"})
+    )
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["physical_neighbor"] == {
+        "chassis_id": "aa:bb:cc:dd:ee:01",
+        "port_id": "Gi0/1",
+        "system_name": "switch01",
+    }
 
 
 def test_upsert_device_persists_last_sensor_id(repo):

@@ -13,6 +13,12 @@ probablemente sea un iPhone/Mac).
 Mejora futura ya implementada: detección de ARP/DHCP spoofing
 (`ArpWatcher`) — vigila si una misma IP es reclamada por MACs
 distintas en tramas ARP, señal habitual de un ataque de suplantación.
+
+Mejora futura ya implementada: topología física parcial vía LLDP
+(`LldpNeighborTracker`) — registra qué switches/APs gestionados se
+anuncian a sí mismos (chassis ID, puerto, nombre de sistema) en el
+segmento que este sensor alcanza a oír. No es la topología completa de
+la red, solo lo que llega a esta interfaz.
 """
 from __future__ import annotations
 
@@ -39,9 +45,17 @@ except ImportError:  # pragma: no cover
     IPv6 = None  # noqa: N816
 
 try:
-    from scapy.all import ARP
+    from scapy.all import ARP, Ether
 except ImportError:  # pragma: no cover
-    ARP = None
+    ARP = Ether = None
+
+try:
+    from scapy.contrib.lldp import LLDPDU, LLDPDUChassisID, LLDPDUPortID, LLDPDUSystemName
+
+    _LLDP_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    LLDPDU = LLDPDUChassisID = LLDPDUPortID = LLDPDUSystemName = None
+    _LLDP_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -200,6 +214,60 @@ class ArpWatcher:
             )
 
 
+def _lldp_str(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode(errors="ignore")
+    return str(value)
+
+
+@dataclass(frozen=True)
+class LldpNeighbor:
+    mac: str
+    chassis_id: str | None
+    port_id: str | None
+    system_name: str | None
+
+
+def parse_lldp_packet(pkt) -> LldpNeighbor | None:
+    """Extrae la identidad que un vecino LLDP anuncia de sí mismo.
+
+    LLDP lo emiten típicamente switches/APs gestionados, anunciándose a
+    los dispositivos conectados directamente a ellos — no es una
+    topología completa de la red, solo lo que este sensor alcanza a
+    oír en su propio segmento.
+    """
+    if not _LLDP_AVAILABLE or Ether is None or LLDPDU not in pkt:
+        return None
+    mac = pkt[Ether].src if Ether in pkt else None
+    if not mac:
+        return None
+
+    chassis_id = _lldp_str(pkt[LLDPDUChassisID].id) if pkt.haslayer(LLDPDUChassisID) else None
+    port_id = _lldp_str(pkt[LLDPDUPortID].id) if pkt.haslayer(LLDPDUPortID) else None
+    system_name = (
+        _lldp_str(pkt[LLDPDUSystemName].system_name) if pkt.haslayer(LLDPDUSystemName) else None
+    )
+    return LldpNeighbor(mac=mac.lower(), chassis_id=chassis_id, port_id=port_id, system_name=system_name)
+
+
+class LldpNeighborTracker:
+    """Acumula el último anuncio LLDP visto de cada MAC vecina."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._neighbors: dict[str, LldpNeighbor] = {}
+
+    def observe(self, neighbor: LldpNeighbor) -> None:
+        with self._lock:
+            self._neighbors[neighbor.mac] = neighbor
+
+    def snapshot(self) -> list[LldpNeighbor]:
+        with self._lock:
+            return list(self._neighbors.values())
+
+
 class PassiveCapture:
     """Captura pasiva en vivo con Scapy; entrega cada ventana cerrada vía callback."""
 
@@ -211,21 +279,32 @@ class PassiveCapture:
         bpf_filter: str | None = None,
         arp_spoof_detection_enabled: bool = False,
         on_arp_spoof_alert: Callable[[ArpSpoofAlert], None] | None = None,
+        lldp_discovery_enabled: bool = False,
     ):
         self.interface = interface
         self.on_window = on_window
         self.aggregator = WindowAggregator(window_seconds)
         self.on_arp_spoof_alert = on_arp_spoof_alert
         self._arp_watcher = ArpWatcher() if arp_spoof_detection_enabled else None
+        self._lldp_tracker = LldpNeighborTracker() if lldp_discovery_enabled else None
         if bpf_filter is not None:
             self.bpf_filter = bpf_filter
         else:
-            # Sin detección de spoofing no hace falta capturar ARP:
-            # menos carga de captura para lo que de verdad se usa.
-            self.bpf_filter = "ip or arp" if arp_spoof_detection_enabled else "ip"
+            # Sin detección/descubrimiento activados no hace falta
+            # capturar ARP/LLDP: menos carga de captura para lo que de
+            # verdad se usa.
+            filters = ["ip"]
+            if arp_spoof_detection_enabled:
+                filters.append("arp")
+            if lldp_discovery_enabled:
+                filters.append("ether proto 0x88cc")
+            self.bpf_filter = " or ".join(filters)
         self._sniffer: AsyncSniffer | None = None
         self._timer_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+
+    def get_lldp_neighbors(self) -> list[LldpNeighbor]:
+        return self._lldp_tracker.snapshot() if self._lldp_tracker is not None else []
 
     def _handle_packet(self, pkt) -> None:
         obs = parse_packet(pkt)
@@ -241,6 +320,11 @@ class PassiveCapture:
                         self.on_arp_spoof_alert(alert)
                     except Exception:
                         logger.exception("Error procesando alerta de ARP spoofing")
+
+        if self._lldp_tracker is not None:
+            neighbor = parse_lldp_packet(pkt)
+            if neighbor is not None:
+                self._lldp_tracker.observe(neighbor)
 
     def _timer_loop(self) -> None:
         while not self._stop_event.is_set():

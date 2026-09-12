@@ -48,6 +48,10 @@ class Device:
     # (NVD) a partir de los banners de servicio — puerto -> lista de
     # {cve_id, severity, summary}.
     cve_findings: dict[int, list] = field(default_factory=dict)
+    # Mejora futura ya implementada: topología física parcial vía LLDP —
+    # último anuncio visto de este dispositivo como vecino LLDP (solo si
+    # el propio dispositivo es un switch/AP que emite LLDP).
+    physical_neighbor: dict | None = None
     dns_queries: dict[str, int] = field(default_factory=dict)  # dominio -> nº consultas
     subnet_cidrs: set[str] = field(default_factory=set)
     first_seen: float = field(default_factory=time.time)
@@ -80,6 +84,7 @@ class Device:
             "service_banners": self.service_banners,
             "tls_certificates": self.tls_certificates,
             "cve_findings": self.cve_findings,
+            "physical_neighbor": self.physical_neighbor,
             "dns_queries": self.dns_queries,
             "subnet_cidrs": sorted(self.subnet_cidrs),
             "first_seen": self.first_seen,
@@ -241,6 +246,23 @@ class FusionEngine:
                 device.security_max_severity = "high"
             device.security_last_reason = reason
             device.security_alert_source = "local-arp"
+
+    def apply_lldp_neighbors(self, neighbors: list) -> None:
+        """Mejora futura ya implementada: topología física parcial vía LLDP.
+
+        Solo enriquece dispositivos ya conocidos por su MAC (el switch o
+        AP que emite LLDP) — no crea dispositivos nuevos a partir de un
+        anuncio LLDP en solitario.
+        """
+        for neighbor in neighbors:
+            device = self.devices.get(neighbor.mac)
+            if device is None:
+                continue
+            device.physical_neighbor = {
+                "chassis_id": neighbor.chassis_id,
+                "port_id": neighbor.port_id,
+                "system_name": neighbor.system_name,
+            }
 
     def set_cve_findings(self, mac: str, findings_by_port: dict[int, list]) -> None:
         """Mejora futura ya implementada: correlación con CVEs (NVD).

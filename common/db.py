@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS devices (
     service_banners TEXT NOT NULL DEFAULT '{}',
     tls_certificates TEXT NOT NULL DEFAULT '{}',
     cve_findings TEXT NOT NULL DEFAULT '{}',
+    physical_neighbor TEXT,
     dns_queries TEXT NOT NULL DEFAULT '{}',
     subnet_cidrs TEXT NOT NULL DEFAULT '[]',
     first_seen REAL NOT NULL,
@@ -113,6 +114,7 @@ def _device_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d["service_banners"] = {int(k): v for k, v in json.loads(d["service_banners"]).items()}
     d["tls_certificates"] = {int(k): v for k, v in json.loads(d["tls_certificates"]).items()}
     d["cve_findings"] = {int(k): v for k, v in json.loads(d["cve_findings"]).items()}
+    d["physical_neighbor"] = json.loads(d["physical_neighbor"]) if d["physical_neighbor"] else None
     d["dns_queries"] = json.loads(d["dns_queries"])
     d["subnet_cidrs"] = json.loads(d["subnet_cidrs"])
     d["is_authorized"] = bool(d["is_authorized"])
@@ -241,11 +243,12 @@ class SQLiteRepository(Repository):
                 """
                 INSERT INTO devices (
                     mac, ips, vendor, device_type, open_ports, mdns_services,
-                    service_banners, tls_certificates, cve_findings, dns_queries, subnet_cidrs,
+                    service_banners, tls_certificates, cve_findings, physical_neighbor,
+                    dns_queries, subnet_cidrs,
                     first_seen, last_seen, active,
                     is_authorized, security_alert_count, security_max_severity,
                     security_last_reason, security_alert_source, last_sensor_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
@@ -255,6 +258,7 @@ class SQLiteRepository(Repository):
                     service_banners = excluded.service_banners,
                     tls_certificates = excluded.tls_certificates,
                     cve_findings = excluded.cve_findings,
+                    physical_neighbor = excluded.physical_neighbor,
                     dns_queries = excluded.dns_queries,
                     subnet_cidrs = excluded.subnet_cidrs,
                     last_seen = excluded.last_seen,
@@ -276,6 +280,7 @@ class SQLiteRepository(Repository):
                     json.dumps(device.get("service_banners", {})),
                     json.dumps(device.get("tls_certificates", {})),
                     json.dumps(device.get("cve_findings", {})),
+                    json.dumps(device["physical_neighbor"]) if device.get("physical_neighbor") else None,
                     json.dumps(device.get("dns_queries", {})),
                     json.dumps(sorted(device.get("subnet_cidrs", []))),
                     device.get("first_seen", now),

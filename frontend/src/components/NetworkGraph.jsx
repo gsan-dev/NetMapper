@@ -48,6 +48,9 @@ function buildElements(devices, relations, groupBySubnet) {
         securityAlertCount: d.security_alert_count || 0,
         securityLastReason: d.security_last_reason,
         securityAlertSource: d.security_alert_source || "none",
+        // Topología física parcial (LLDP): solo presente si este propio
+        // dispositivo es un switch/AP que se anuncia a sí mismo.
+        physicalNeighbor: d.physical_neighbor || null,
         // Nodo compuesto (grupo visual por subred): solo se asigna si el
         // modo "agrupar por subred" está activo y el dispositivo tiene
         // una subred conocida — Cytoscape ignora `parent` si es undefined.
