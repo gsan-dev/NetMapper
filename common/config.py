@@ -199,6 +199,17 @@ class Settings:
         default_factory=lambda: _bool("LLDP_DISCOVERY_ENABLED", True)
     )
 
+    # Informe semanal en PDF.
+    reports_dir: str = os.getenv("REPORTS_DIR", "./reports")
+
+    @property
+    def reports_dir_absolute(self) -> Path:
+        path = Path(self.reports_dir)
+        if not path.is_absolute():
+            path = REPO_ROOT / path
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     @property
     def db_path_absolute(self) -> Path:
         path = Path(self.db_path)

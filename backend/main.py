@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from common.config import settings
 from common.db import get_repository
-from routes import devices, graph, networks, ws
+from routes import devices, graph, networks, reports, ws
 from ws_manager import manager
 
 logging.basicConfig(level=logging.INFO)
@@ -100,6 +100,7 @@ app.add_middleware(
 app.include_router(networks.router)
 app.include_router(devices.router)
 app.include_router(graph.router)
+app.include_router(reports.router)
 app.include_router(ws.router)
 
 

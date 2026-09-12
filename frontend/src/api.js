@@ -48,6 +48,10 @@ export function fetchTraceroute(mac) {
   return getJson(`/api/devices/${encodeURIComponent(mac)}/traceroute`);
 }
 
+export function weeklyReportUrl() {
+  return `${API_BASE_URL}/api/reports/weekly`;
+}
+
 export function connectWebSocket({ onMessage, onOpen, onClose }) {
   const ws = new WebSocket(`${WS_BASE_URL}/ws`);
   ws.onopen = () => onOpen && onOpen();

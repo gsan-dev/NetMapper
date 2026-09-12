@@ -212,6 +212,65 @@ class Repository(ABC):
     @abstractmethod
     def get_latest_traceroute_for_mac(self, mac: str) -> dict[str, Any] | None: ...
 
+    def get_weekly_summary(self, since: float) -> dict[str, Any]:
+        """Resumen para el informe semanal en PDF (mejora futura ya
+        implementada, ver common/reports.py).
+
+        Método concreto (no abstracto): se apoya solo en `list_devices` y
+        `get_latest_graph_snapshot`, que cada backend concreto ya debe
+        implementar — así Neo4jRepository lo hereda gratis en cuanto
+        implemente esos dos métodos, sin duplicar esta agregación.
+        """
+        devices = self.list_devices(active_only=True)
+        new_devices = [d for d in devices if d["first_seen"] >= since]
+        unauthorized = [d for d in devices if d["is_authorized"] is False]
+        alerted = sorted(
+            (d for d in devices if d["security_max_severity"] != "none"),
+            key=lambda d: d["security_alert_count"],
+            reverse=True,
+        )
+
+        cve_devices = []
+        total_cves = 0
+        for d in devices:
+            count = sum(len(v) for v in d["cve_findings"].values())
+            if count:
+                total_cves += count
+                cve_devices.append({"mac": d["mac"], "vendor": d["vendor"], "cve_count": count})
+        cve_devices.sort(key=lambda d: d["cve_count"], reverse=True)
+
+        latest_snapshot = self.get_latest_graph_snapshot()
+
+        return {
+            "total_devices": len(devices),
+            "new_devices_count": len(new_devices),
+            "new_devices": [
+                {"mac": d["mac"], "vendor": d["vendor"], "device_type": d["device_type"]}
+                for d in new_devices
+            ][:20],
+            "unauthorized_devices": [
+                {"mac": d["mac"], "vendor": d["vendor"], "ips": d["ips"]} for d in unauthorized
+            ],
+            "security_alerts": [
+                {
+                    "mac": d["mac"],
+                    "vendor": d["vendor"],
+                    "count": d["security_alert_count"],
+                    "severity": d["security_max_severity"],
+                    "reason": d["security_last_reason"],
+                    "source": d["security_alert_source"],
+                }
+                for d in alerted[:10]
+            ],
+            "cve_findings_count": total_cves,
+            "cve_devices": cve_devices[:10],
+            "node_count": latest_snapshot["node_count"] if latest_snapshot else 0,
+            "edge_count": latest_snapshot["edge_count"] if latest_snapshot else 0,
+            "community_count": (
+                len(set(latest_snapshot["communities"].values())) if latest_snapshot else 0
+            ),
+        }
+
 
 class SQLiteRepository(Repository):
     def __init__(self, db_path: Path):

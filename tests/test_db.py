@@ -368,6 +368,94 @@ def test_cve_cache_round_trip(repo):
     assert cached["checked_at"] == 2000.0
 
 
+def test_get_weekly_summary_counts_devices_and_new_devices(repo):
+    now = time.time()
+    repo.upsert_device(_device(mac="aa:bb:cc:dd:ee:01", first_seen=now - 100))
+    repo.upsert_device(_device(mac="aa:bb:cc:dd:ee:02", first_seen=now - 1_000_000))
+
+    summary = repo.get_weekly_summary(since=now - 3600)
+
+    assert summary["total_devices"] == 2
+    assert summary["new_devices_count"] == 1
+    assert summary["new_devices"][0]["mac"] == "aa:bb:cc:dd:ee:01"
+
+
+def test_get_weekly_summary_lists_unauthorized_devices(repo):
+    repo.upsert_device(_device(mac="aa:bb:cc:dd:ee:01", is_authorized=False))
+    repo.upsert_device(_device(mac="aa:bb:cc:dd:ee:02", is_authorized=True))
+
+    summary = repo.get_weekly_summary(since=0)
+
+    assert len(summary["unauthorized_devices"]) == 1
+    assert summary["unauthorized_devices"][0]["mac"] == "aa:bb:cc:dd:ee:01"
+
+
+def test_get_weekly_summary_lists_security_alerts_sorted_by_count(repo):
+    repo.upsert_device(
+        _device(
+            mac="aa:bb:cc:dd:ee:01",
+            security_alert_count=1,
+            security_max_severity="low",
+            security_alert_source="netguardian",
+        )
+    )
+    repo.upsert_device(
+        _device(
+            mac="aa:bb:cc:dd:ee:02",
+            security_alert_count=5,
+            security_max_severity="high",
+            security_alert_source="local-arp",
+        )
+    )
+
+    summary = repo.get_weekly_summary(since=0)
+
+    assert len(summary["security_alerts"]) == 2
+    assert summary["security_alerts"][0]["mac"] == "aa:bb:cc:dd:ee:02"  # más alertas primero
+
+
+def test_get_weekly_summary_counts_cve_findings(repo):
+    repo.upsert_device(
+        _device(
+            mac="aa:bb:cc:dd:ee:01",
+            cve_findings={22: [{"cve_id": "CVE-2023-1"}, {"cve_id": "CVE-2023-2"}]},
+        )
+    )
+    repo.upsert_device(_device(mac="aa:bb:cc:dd:ee:02"))
+
+    summary = repo.get_weekly_summary(since=0)
+
+    assert summary["cve_findings_count"] == 2
+    assert summary["cve_devices"] == [{"mac": "aa:bb:cc:dd:ee:01", "vendor": "Synology Incorporated", "cve_count": 2}]
+
+
+def test_get_weekly_summary_includes_latest_snapshot_metrics(repo):
+    repo.insert_graph_snapshot(
+        {
+            "created_at": time.time(),
+            "node_count": 3,
+            "edge_count": 2,
+            "communities": {"aa:bb:cc:dd:ee:01": 0, "aa:bb:cc:dd:ee:02": 1},
+            "centrality": {},
+            "layers": {},
+        }
+    )
+
+    summary = repo.get_weekly_summary(since=0)
+
+    assert summary["node_count"] == 3
+    assert summary["edge_count"] == 2
+    assert summary["community_count"] == 2
+
+
+def test_get_weekly_summary_defaults_snapshot_metrics_to_zero_without_snapshots(repo):
+    summary = repo.get_weekly_summary(since=0)
+
+    assert summary["node_count"] == 0
+    assert summary["edge_count"] == 0
+    assert summary["community_count"] == 0
+
+
 def test_neo4j_repository_raises_not_implemented():
     repo = Neo4jRepository(uri="bolt://localhost:7687", user="neo4j", password="x")
     with pytest.raises(NotImplementedError):

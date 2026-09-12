@@ -253,6 +253,18 @@ def test_get_traceroute_returns_latest_result(client):
     assert body["hops"] == [{"ttl": 1, "ip": "192.168.1.1", "rtt_ms": 1.2}]
 
 
+def test_weekly_report_returns_pdf(client):
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.upsert_device({"mac": "aa:bb:cc:dd:ee:01", "ips": ["192.168.1.10"], "vendor": "Synology"})
+
+    response = client.get("/api/reports/weekly")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF")
+
+
 def test_websocket_receives_graph_update(client):
     with client.websocket_connect("/ws") as ws:
         message = ws.receive_json()

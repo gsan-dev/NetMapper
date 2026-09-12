@@ -10,6 +10,7 @@ import {
   fetchSnapshots,
   fetchTraceroute,
   requestTraceroute,
+  weeklyReportUrl,
 } from "./api";
 
 const TRACEROUTE_POLL_MS = 1500;
@@ -185,6 +186,10 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  function handleDownloadWeeklyReport() {
+    window.open(weeklyReportUrl(), "_blank");
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -210,6 +215,7 @@ export default function App() {
           <button onClick={handleExportGraphml} title="Importable en draw.io: File > Import from > Device">
             Exportar GraphML
           </button>
+          <button onClick={handleDownloadWeeklyReport}>Informe semanal (PDF)</button>
         </div>
       </header>
 

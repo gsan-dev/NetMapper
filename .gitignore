@@ -28,6 +28,10 @@ data/*.db-wal
 data/*.db-shm
 data/oui_local_cache/
 
+# Reports generados
+reports/*.pdf
+!reports/.gitkeep
+
 # Logs
 *.log
 logs/
