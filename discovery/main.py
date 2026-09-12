@@ -30,8 +30,9 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+for _extra_path in (REPO_ROOT, REPO_ROOT / "analysis"):
+    if str(_extra_path) not in sys.path:
+        sys.path.insert(0, str(_extra_path))
 
 from common.config import settings
 from common.db import get_repository
