@@ -45,7 +45,31 @@ def client(backend_app):
 def test_health(client):
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["sensor_healthy"] is False  # sin ninguna pasada registrada todavía
+    assert body["last_discovery_pass_at"] is None
+
+
+def test_health_reports_sensor_healthy_after_recent_pass(client):
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.record_discovery_pass(time.time())
+
+    response = client.get("/api/health")
+    assert response.json()["sensor_healthy"] is True
+
+
+def test_health_reports_sensor_unhealthy_when_pass_is_stale(client):
+    from common.config import settings
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.record_discovery_pass(time.time() - settings.scan_interval_seconds * 10)
+
+    response = client.get("/api/health")
+    assert response.json()["sensor_healthy"] is False
 
 
 def test_networks_endpoint_empty_by_default(client):

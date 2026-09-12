@@ -2,6 +2,7 @@
 import importlib.util
 import ipaddress
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -171,6 +172,45 @@ def test_run_analysis_pass_persists_snapshot(pipeline):
     assert snapshot is not None
     assert snapshot["node_count"] == 1
     assert snapshot["devices"][0]["mac"] == "aa:bb:cc:dd:ee:01"
+
+    status = pipeline.repo.get_pipeline_status()
+    assert status["last_analysis_pass_at"] is not None
+
+
+def test_run_analysis_pass_prunes_old_snapshots(pipeline):
+    from common.config import settings
+
+    old_time = time.time() - settings.graph_snapshot_retention_seconds - 1000
+    pipeline.repo.insert_graph_snapshot(
+        {
+            "created_at": old_time,
+            "node_count": 0,
+            "edge_count": 0,
+            "communities": {},
+            "centrality": {},
+            "layers": {},
+            "devices": [],
+            "relations": [],
+        }
+    )
+
+    pipeline.engine.ingest_host(_host(), "192.168.1.0/24")
+    pipeline.run_analysis_pass()
+
+    snapshots = pipeline.repo.list_graph_snapshots(limit=10)
+    assert all(s["created_at"] != old_time for s in snapshots)
+
+
+def test_run_discovery_pass_records_pipeline_status(pipeline, pipeline_module):
+    subnet = Subnet(cidr="192.168.1.0/24", discovery_method="direct")
+
+    with patch.object(pipeline_module, "discover_networks", return_value=[subnet]), patch.object(
+        pipeline_module, "discover_hosts", return_value=[]
+    ):
+        pipeline.run_discovery_pass()
+
+    status = pipeline.repo.get_pipeline_status()
+    assert status["last_discovery_pass_at"] is not None
 
 
 def test_run_once_executes_full_pipeline(pipeline, pipeline_module):

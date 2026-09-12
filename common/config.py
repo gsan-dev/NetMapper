@@ -139,6 +139,66 @@ class Settings:
     # hasta que el usuario decide activar la comprobación).
     allowed_devices: set[str] = field(default_factory=lambda: _mac_set("ALLOWED_DEVICES"))
 
+    # Identidad del sensor (para desplegar varios en segmentos/VLANs
+    # aislados que comparten backend + base de datos). Cada sensor solo
+    # puede marcar inactivos los dispositivos que él mismo vio por última
+    # vez, nunca los que reportó otro sensor.
+    sensor_id: str = os.getenv("SENSOR_ID", "default")
+
+    # Retención de snapshots del análisis de grafo: sin esto,
+    # graph_snapshots crece para siempre en modo --continuous. Se
+    # conserva siempre el más reciente aunque sea más antiguo que esto.
+    graph_snapshot_retention_seconds: int = field(
+        default_factory=lambda: _int("GRAPH_SNAPSHOT_RETENTION_SECONDS", 30 * 24 * 3600)
+    )
+
+    # Banner grabbing: lee el saludo/cabecera inicial de cada puerto
+    # abierto (versión de servicio), base para la correlación con CVEs.
+    banner_grab_enabled: bool = field(
+        default_factory=lambda: _bool("BANNER_GRAB_ENABLED", True)
+    )
+    banner_grab_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("BANNER_GRAB_TIMEOUT_SECONDS", "1.5"))
+    )
+
+    # Inspección de certificados TLS en puertos HTTPS-like.
+    tls_inspect_enabled: bool = field(
+        default_factory=lambda: _bool("TLS_INSPECT_ENABLED", True)
+    )
+    tls_inspect_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("TLS_INSPECT_TIMEOUT_SECONDS", "2.0"))
+    )
+
+    # Correlación con CVEs (NVD): desactivada por defecto porque hace
+    # peticiones salientes a un servicio externo y está sujeta a límites
+    # de tasa — es un opt-in explícito, no algo que se active solo.
+    cve_lookup_enabled: bool = field(
+        default_factory=lambda: _bool("CVE_LOOKUP_ENABLED", False)
+    )
+    cve_lookup_interval_seconds: int = field(
+        default_factory=lambda: _int("CVE_LOOKUP_INTERVAL_SECONDS", 86400)
+    )
+    nvd_api_key: str = os.getenv("NVD_API_KEY", "")
+
+    # Detección de ARP/DHCP spoofing (pasiva, sin riesgo): activada por
+    # defecto, igual que el resto de descubrimiento pasivo.
+    arp_spoof_detection_enabled: bool = field(
+        default_factory=lambda: _bool("ARP_SPOOF_DETECTION_ENABLED", True)
+    )
+
+    # Traceroute bajo demanda (Fase de diagnóstico).
+    traceroute_max_hops: int = field(
+        default_factory=lambda: _int("TRACEROUTE_MAX_HOPS", 30)
+    )
+    traceroute_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("TRACEROUTE_TIMEOUT_SECONDS", "2.0"))
+    )
+
+    # Descubrimiento de topología física vía LLDP (pasivo).
+    lldp_discovery_enabled: bool = field(
+        default_factory=lambda: _bool("LLDP_DISCOVERY_ENABLED", True)
+    )
+
     @property
     def db_path_absolute(self) -> Path:
         path = Path(self.db_path)

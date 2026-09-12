@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS graph_snapshots (
     relations TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_graph_snapshots_created_at ON graph_snapshots(created_at);
+
+-- Fila única (id=1) con la salud del pipeline: cuándo corrió por última
+-- vez cada fase, para que el backend pueda avisar si el sensor murió en
+-- silencio en vez de quedarse callado sin más.
+CREATE TABLE IF NOT EXISTS pipeline_status (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_discovery_pass_at REAL,
+    last_analysis_pass_at REAL
+);
 """
 
 
@@ -134,6 +143,18 @@ class Repository(ABC):
 
     @abstractmethod
     def get_latest_graph_snapshot(self) -> dict[str, Any] | None: ...
+
+    @abstractmethod
+    def prune_old_graph_snapshots(self, cutoff: float) -> int: ...
+
+    @abstractmethod
+    def record_discovery_pass(self, timestamp: float) -> None: ...
+
+    @abstractmethod
+    def record_analysis_pass(self, timestamp: float) -> None: ...
+
+    @abstractmethod
+    def get_pipeline_status(self) -> dict[str, Any] | None: ...
 
 
 class SQLiteRepository(Repository):
@@ -369,6 +390,48 @@ class SQLiteRepository(Repository):
             ).fetchone()
             return self._snapshot_row_to_dict(row) if row else None
 
+    def prune_old_graph_snapshots(self, cutoff: float) -> int:
+        """Borra snapshots anteriores a `cutoff`, conservando siempre el
+        más reciente aunque también sea más antiguo que el corte — el
+        time-lapse del frontend siempre necesita al menos un punto."""
+        with self._connect() as conn:
+            latest = conn.execute("SELECT MAX(id) AS id FROM graph_snapshots").fetchone()
+            latest_id = latest["id"] if latest and latest["id"] is not None else -1
+            cur = conn.execute(
+                "DELETE FROM graph_snapshots WHERE created_at < ? AND id != ?",
+                (cutoff, latest_id),
+            )
+            return cur.rowcount
+
+    # --- Salud del pipeline ---
+
+    def record_discovery_pass(self, timestamp: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO pipeline_status (id, last_discovery_pass_at)
+                VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET last_discovery_pass_at = excluded.last_discovery_pass_at
+                """,
+                (timestamp,),
+            )
+
+    def record_analysis_pass(self, timestamp: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO pipeline_status (id, last_analysis_pass_at)
+                VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET last_analysis_pass_at = excluded.last_analysis_pass_at
+                """,
+                (timestamp,),
+            )
+
+    def get_pipeline_status(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM pipeline_status WHERE id = 1").fetchone()
+            return _row_to_dict(row) if row else None
+
 
 class Neo4jRepository(Repository):
     """Stub para la mejora futura: migrar a Neo4j para un modelo de grafo real.
@@ -429,6 +492,18 @@ class Neo4jRepository(Repository):
         self._not_implemented()
 
     def get_latest_graph_snapshot(self) -> dict[str, Any] | None:
+        self._not_implemented()
+
+    def prune_old_graph_snapshots(self, cutoff: float) -> int:
+        self._not_implemented()
+
+    def record_discovery_pass(self, timestamp: float) -> None:
+        self._not_implemented()
+
+    def record_analysis_pass(self, timestamp: float) -> None:
+        self._not_implemented()
+
+    def get_pipeline_status(self) -> dict[str, Any] | None:
         self._not_implemented()
 
 

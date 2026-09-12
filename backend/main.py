@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -104,7 +105,24 @@ app.include_router(ws.router)
 
 @app.get("/api/health", tags=["health"])
 async def health() -> dict:
-    return {"status": "ok", "websocket_clients": manager.active_connections}
+    """Incluye la salud del propio pipeline de escaneo (discovery/main.py),
+    no solo la del proceso del backend: si el sensor murió en silencio,
+    esto lo hace visible en vez de que el panel se quede simplemente
+    "sin novedades" sin que nadie sepa por qué."""
+    repo = get_repository()
+    pipeline_status = repo.get_pipeline_status() or {}
+    last_discovery = pipeline_status.get("last_discovery_pass_at")
+
+    stale_after = settings.scan_interval_seconds * 3
+    sensor_healthy = last_discovery is not None and (time.time() - last_discovery) < stale_after
+
+    return {
+        "status": "ok",
+        "websocket_clients": manager.active_connections,
+        "sensor_healthy": sensor_healthy,
+        "last_discovery_pass_at": last_discovery,
+        "last_analysis_pass_at": pipeline_status.get("last_analysis_pass_at"),
+    }
 
 
 if __name__ == "__main__":

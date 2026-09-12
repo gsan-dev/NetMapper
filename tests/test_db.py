@@ -223,6 +223,65 @@ def test_get_latest_graph_snapshot_returns_none_when_empty(repo):
     assert repo.get_latest_graph_snapshot() is None
 
 
+def _snapshot(created_at, node_count=1):
+    return {
+        "created_at": created_at,
+        "node_count": node_count,
+        "edge_count": 0,
+        "communities": {},
+        "centrality": {},
+        "layers": {},
+        "devices": [],
+        "relations": [],
+    }
+
+
+def test_prune_old_graph_snapshots_removes_only_old_ones(repo):
+    now = time.time()
+    repo.insert_graph_snapshot(_snapshot(now - 1000, node_count=1))
+    repo.insert_graph_snapshot(_snapshot(now - 10, node_count=2))
+
+    deleted = repo.prune_old_graph_snapshots(cutoff=now - 500)
+
+    assert deleted == 1
+    remaining = repo.list_graph_snapshots(limit=10)
+    assert len(remaining) == 1
+    assert remaining[0]["node_count"] == 2
+
+
+def test_prune_old_graph_snapshots_always_keeps_the_latest(repo):
+    now = time.time()
+    # un único snapshot muy antiguo: no debe quedar la BD vacía de golpe
+    repo.insert_graph_snapshot(_snapshot(now - 999999, node_count=1))
+
+    deleted = repo.prune_old_graph_snapshots(cutoff=now)
+
+    assert deleted == 0
+    assert len(repo.list_graph_snapshots(limit=10)) == 1
+
+
+def test_pipeline_status_starts_as_none(repo):
+    assert repo.get_pipeline_status() is None
+
+
+def test_record_discovery_and_analysis_pass(repo):
+    repo.record_discovery_pass(1000.0)
+    status = repo.get_pipeline_status()
+    assert status["last_discovery_pass_at"] == 1000.0
+    assert status["last_analysis_pass_at"] is None
+
+    repo.record_analysis_pass(1005.0)
+    status = repo.get_pipeline_status()
+    assert status["last_discovery_pass_at"] == 1000.0
+    assert status["last_analysis_pass_at"] == 1005.0
+
+    # una segunda pasada actualiza en el sitio, no inserta una fila nueva
+    repo.record_discovery_pass(2000.0)
+    status = repo.get_pipeline_status()
+    assert status["last_discovery_pass_at"] == 2000.0
+    assert status["last_analysis_pass_at"] == 1005.0
+
+
 def test_neo4j_repository_raises_not_implemented():
     repo = Neo4jRepository(uri="bolt://localhost:7687", user="neo4j", password="x")
     with pytest.raises(NotImplementedError):

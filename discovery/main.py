@@ -138,6 +138,7 @@ class Pipeline:
         self.engine.prune_stale_devices(max_age_seconds=stale_after)
         self._apply_device_authorization()
         self.repo.mark_stale_devices_inactive(set(self.engine.devices.keys()))
+        self.repo.record_discovery_pass(time.time())
 
     def _apply_device_authorization(self) -> None:
         """Mejora futura ya implementada: detección de dispositivos no
@@ -186,6 +187,15 @@ class Pipeline:
         result["devices"] = [d.to_dict() for d in devices]
         result["relations"] = [r.to_dict() for r in relations]
         self.repo.insert_graph_snapshot(result)
+
+        now = time.time()
+        self.repo.record_analysis_pass(now)
+        deleted = self.repo.prune_old_graph_snapshots(
+            cutoff=now - settings.graph_snapshot_retention_seconds
+        )
+        if deleted:
+            logger.info("Snapshots antiguos purgados: %d", deleted)
+
         logger.info(
             "Análisis de grafo: %d nodos, %d aristas, %d comunidades",
             result["node_count"],
