@@ -36,9 +36,48 @@ def test_discover_local_networks_derives_cidr_from_interfaces():
     assert subnets[0].interface == "eth0"
 
 
+def test_make_subnet_converts_full_ipv6_netmask_notation():
+    # ipaddress.ip_network no acepta "direccion/ffff:ffff:ffff:ffff::" para
+    # IPv6 (solo para IPv4) — pero así es como netifaces da la máscara.
+    subnet = nd._make_subnet("2001:db8::10", "ffff:ffff:ffff:ffff::", "direct")
+    assert subnet is not None
+    assert subnet.cidr == "2001:db8::/64"
+
+
+def test_make_subnet_accepts_plain_ipv6_prefix_length_too():
+    subnet = nd._make_subnet("2001:db8::10", "64", "direct")
+    assert subnet is not None
+    assert subnet.cidr == "2001:db8::/64"
+
+
 def test_discover_local_networks_returns_empty_without_netifaces():
     with patch.object(nd, "_NETIFACES_AVAILABLE", False):
         assert nd.discover_local_networks() == []
+
+
+def test_discover_local_networks_includes_ipv6_and_strips_scope_id():
+    fake_interfaces = ["eth0"]
+
+    def fake_ifaddresses(iface):
+        return {
+            nd.netifaces.AF_INET: [{"addr": "192.168.1.50", "netmask": "255.255.255.0"}],
+            nd.netifaces.AF_INET6: [
+                {"addr": "2001:db8::10", "netmask": "ffff:ffff:ffff:ffff::"},
+                # link-local con scope id, como lo devuelve netifaces de verdad;
+                # debe descartarse por ser link-local, no solo por el "%eth0".
+                {"addr": "fe80::1%eth0", "netmask": "ffff:ffff:ffff:ffff::"},
+            ],
+        }
+
+    with patch.object(nd, "_NETIFACES_AVAILABLE", True), patch.object(
+        nd.netifaces, "interfaces", return_value=fake_interfaces
+    ), patch.object(nd.netifaces, "ifaddresses", side_effect=fake_ifaddresses):
+        subnets = nd.discover_local_networks()
+
+    cidrs = {s.cidr for s in subnets}
+    assert "192.168.1.0/24" in cidrs
+    assert "2001:db8::/64" in cidrs
+    assert not any(c.startswith("fe80") for c in cidrs)
 
 
 def test_discover_routed_networks_skips_default_route_and_local_overlap():
@@ -68,6 +107,54 @@ def test_discover_routed_networks_skips_default_route_and_local_overlap():
     assert subnets[0].cidr == "10.0.0.0/24"
     assert subnets[0].discovery_method == "route"
     assert subnets[0].gateway == "192.168.1.1"
+
+
+def test_discover_routed_networks_includes_ipv6_family_routes():
+    def fake_get_routes(family):
+        if family == 10:  # AF_INET6
+            return [
+                FakeRoute(
+                    dst_len=32, attrs={"RTA_DST": "2001:db8:1::", "RTA_GATEWAY": "fe80::1"}
+                )
+            ]
+        return []
+
+    mock_ipr = MagicMock()
+    mock_ipr.get_routes.side_effect = fake_get_routes
+    mock_ipr.__enter__.return_value = mock_ipr
+    mock_ipr.__exit__.return_value = False
+
+    with patch.object(nd, "_PYROUTE2_AVAILABLE", True), patch.object(
+        nd, "IPRoute", return_value=mock_ipr
+    ):
+        subnets = nd.discover_routed_networks([])
+
+    assert len(subnets) == 1
+    # /32 enmascara todo salvo los primeros 32 bits: 2001:db8:1:: -> 2001:db8::/32
+    assert subnets[0].cidr == "2001:db8::/32"
+    assert subnets[0].gateway == "fe80::1"
+
+
+def test_discover_routed_networks_does_not_crash_comparing_ipv6_route_to_ipv4_local():
+    local = [nd.Subnet(cidr="192.168.1.0/24", discovery_method="direct")]
+
+    def fake_get_routes(family):
+        if family == 10:
+            return [FakeRoute(dst_len=32, attrs={"RTA_DST": "2001:db8::", "RTA_GATEWAY": None})]
+        return []
+
+    mock_ipr = MagicMock()
+    mock_ipr.get_routes.side_effect = fake_get_routes
+    mock_ipr.__enter__.return_value = mock_ipr
+    mock_ipr.__exit__.return_value = False
+
+    with patch.object(nd, "_PYROUTE2_AVAILABLE", True), patch.object(
+        nd, "IPRoute", return_value=mock_ipr
+    ):
+        subnets = nd.discover_routed_networks(local)
+
+    assert len(subnets) == 1
+    assert subnets[0].cidr == "2001:db8::/32"
 
 
 def test_discover_routed_networks_returns_empty_without_pyroute2():

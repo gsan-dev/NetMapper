@@ -55,7 +55,10 @@ except ImportError:  # pragma: no cover
     _PYSNMP_AVAILABLE = False
 
 
-# ipAddrTable.ipAdEntNetMask — para cada IP configurada en el router, su máscara.
+# ipAddrTable.ipAdEntNetMask — para cada IP configurada en el router, su
+# máscara. Es una tabla de MIB-II clásica y por tanto solo IPv4; el
+# descubrimiento vía SNMP no cubre subredes IPv6 del router (para eso
+# haría falta la tabla ipAddressTable de RFC 4293, no implementada aquí).
 IP_ADDR_TABLE_NETMASK_OID = "1.3.6.1.2.1.4.20.1.3"
 
 
@@ -67,7 +70,8 @@ class Subnet:
     gateway: str | None = None
 
     @property
-    def network(self) -> ipaddress.IPv4Network:
+    def network(self):
+        """IPv4Network o IPv6Network, según el CIDR de esta subred."""
         return ipaddress.ip_network(self.cidr, strict=False)
 
     @property
@@ -85,7 +89,15 @@ class Subnet:
 
 def _make_subnet(ip: str, mask: str, method: str, **kwargs) -> Subnet | None:
     try:
-        network = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
+        if ":" in mask:
+            # netifaces da la máscara IPv6 en notación completa (p. ej.
+            # "ffff:ffff:ffff:ffff::"), pero ipaddress.ip_network solo
+            # acepta esa notación para IPv4 — para IPv6 exige longitud de
+            # prefijo. La convertimos contando los bits altos a 1.
+            prefixlen = bin(int(ipaddress.IPv6Address(mask))).count("1")
+            network = ipaddress.ip_network(f"{ip}/{prefixlen}", strict=False)
+        else:
+            network = ipaddress.ip_network(f"{ip}/{mask}", strict=False)
     except ValueError:
         return None
     if network.is_loopback or network.is_link_local:
@@ -94,21 +106,26 @@ def _make_subnet(ip: str, mask: str, method: str, **kwargs) -> Subnet | None:
 
 
 def discover_local_networks() -> list[Subnet]:
-    """Redes directamente conectadas, derivadas de cada interfaz local."""
+    """Redes directamente conectadas (IPv4 e IPv6), derivadas de cada interfaz local."""
     if not _NETIFACES_AVAILABLE:
         logger.warning("netifaces no disponible; no se pueden enumerar interfaces locales")
         return []
 
     subnets: dict[str, Subnet] = {}
     for iface in netifaces.interfaces():
-        addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
-        for addr in addrs:
-            ip, netmask = addr.get("addr"), addr.get("netmask")
-            if not ip or not netmask:
-                continue
-            subnet = _make_subnet(ip, netmask, "direct", interface=iface)
-            if subnet is not None:
-                subnets[subnet.key] = subnet
+        all_addrs = netifaces.ifaddresses(iface)
+        for family in (netifaces.AF_INET, netifaces.AF_INET6):
+            for addr in all_addrs.get(family, []):
+                ip, netmask = addr.get("addr"), addr.get("netmask")
+                if not ip or not netmask:
+                    continue
+                if family == netifaces.AF_INET6 and "%" in ip:
+                    # netifaces incluye el scope id en direcciones IPv6
+                    # link-local (p. ej. "fe80::1%eth0"); ipaddress no lo acepta.
+                    ip = ip.split("%", 1)[0]
+                subnet = _make_subnet(ip, netmask, "direct", interface=iface)
+                if subnet is not None:
+                    subnets[subnet.key] = subnet
 
     return list(subnets.values())
 
@@ -128,24 +145,29 @@ def discover_routed_networks(local_networks: list[Subnet] | None = None) -> list
 
     try:
         with IPRoute() as ipr:
-            for route in ipr.get_routes(family=2):  # AF_INET
-                dst = route.get_attr("RTA_DST")
-                dst_len = route.get("dst_len")
-                gateway = route.get_attr("RTA_GATEWAY")
+            for family in (2, 10):  # AF_INET, AF_INET6
+                for route in ipr.get_routes(family=family):
+                    dst = route.get_attr("RTA_DST")
+                    dst_len = route.get("dst_len")
+                    gateway = route.get_attr("RTA_GATEWAY")
 
-                if not dst or dst_len is None or dst_len == 0:
-                    continue  # sin RTA_DST es la ruta por defecto (0.0.0.0/0)
+                    if not dst or dst_len is None or dst_len == 0:
+                        continue  # sin RTA_DST es la ruta por defecto
 
-                try:
-                    network = ipaddress.ip_network(f"{dst}/{dst_len}", strict=False)
-                except ValueError:
-                    continue
+                    try:
+                        network = ipaddress.ip_network(f"{dst}/{dst_len}", strict=False)
+                    except ValueError:
+                        continue
 
-                if any(network.subnet_of(local) or network == local for local in local_cidrs):
-                    continue
+                    if any(
+                        local.version == network.version
+                        and (network.subnet_of(local) or network == local)
+                        for local in local_cidrs
+                    ):
+                        continue
 
-                subnet = Subnet(cidr=str(network), discovery_method="route", gateway=gateway)
-                subnets[subnet.key] = subnet
+                    subnet = Subnet(cidr=str(network), discovery_method="route", gateway=gateway)
+                    subnets[subnet.key] = subnet
     except Exception:
         logger.exception("Error leyendo la tabla de rutas del sistema")
 
