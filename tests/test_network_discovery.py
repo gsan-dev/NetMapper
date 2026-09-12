@@ -7,8 +7,8 @@ import network_discovery as nd
 class FakeRoute(dict):
     """Imita un netlink route record de pyroute2: dict + .get_attr()."""
 
-    def __init__(self, dst_len, attrs):
-        super().__init__(dst_len=dst_len)
+    def __init__(self, dst_len, attrs, type=nd.RTN_UNICAST):
+        super().__init__(dst_len=dst_len, type=type)
         self._attrs = attrs
 
     def get_attr(self, name):
@@ -48,6 +48,26 @@ def test_make_subnet_accepts_plain_ipv6_prefix_length_too():
     subnet = nd._make_subnet("2001:db8::10", "64", "direct")
     assert subnet is not None
     assert subnet.cidr == "2001:db8::/64"
+
+
+def test_discover_local_networks_supports_netifaces2_mask_key():
+    # netifaces2 (el paquete realmente instalado, ver requirements.txt)
+    # devuelve la máscara bajo la clave "mask", no "netmask" como el
+    # netifaces original — regresión real observada en un despliegue:
+    # sin este fallback no se detectaba NINGUNA red directamente
+    # conectada, solo las que también aparecían por tabla de rutas.
+    fake_interfaces = ["eth0"]
+
+    def fake_ifaddresses(iface):
+        return {nd.netifaces.AF_INET: [{"addr": "192.168.1.50", "mask": "255.255.255.0"}]}
+
+    with patch.object(nd, "_NETIFACES_AVAILABLE", True), patch.object(
+        nd.netifaces, "interfaces", return_value=fake_interfaces
+    ), patch.object(nd.netifaces, "ifaddresses", side_effect=fake_ifaddresses):
+        subnets = nd.discover_local_networks()
+
+    assert len(subnets) == 1
+    assert subnets[0].cidr == "192.168.1.0/24"
 
 
 def test_discover_local_networks_returns_empty_without_netifaces():
@@ -155,6 +175,33 @@ def test_discover_routed_networks_does_not_crash_comparing_ipv6_route_to_ipv4_lo
 
     assert len(subnets) == 1
     assert subnets[0].cidr == "2001:db8::/32"
+
+
+def test_discover_routed_networks_skips_kernel_local_and_broadcast_entries():
+    # Regresión real observada en un despliegue con varias redes Docker:
+    # get_routes() también devuelve, para cada interfaz, una entrada
+    # RTN_LOCAL (type=2) para su propia IP y una RTN_BROADCAST (type=3)
+    # para su dirección de broadcast — ambas como /32 "hacia sí mismo",
+    # no redes reales. Sin el filtro por type=RTN_UNICAST, cada interfaz
+    # generaba dos "redes" fantasma además de la real.
+    routes = [
+        FakeRoute(dst_len=24, attrs={"RTA_DST": "192.168.0.0"}, type=nd.RTN_UNICAST),
+        FakeRoute(dst_len=32, attrs={"RTA_DST": "192.168.0.240"}, type=2),  # RTN_LOCAL
+        FakeRoute(dst_len=32, attrs={"RTA_DST": "192.168.0.255"}, type=3),  # RTN_BROADCAST
+    ]
+
+    mock_ipr = MagicMock()
+    mock_ipr.get_routes.return_value = routes
+    mock_ipr.__enter__.return_value = mock_ipr
+    mock_ipr.__exit__.return_value = False
+
+    with patch.object(nd, "_PYROUTE2_AVAILABLE", True), patch.object(
+        nd, "IPRoute", return_value=mock_ipr
+    ):
+        subnets = nd.discover_routed_networks([])
+
+    assert len(subnets) == 1
+    assert subnets[0].cidr == "192.168.0.0/24"
 
 
 def test_discover_routed_networks_returns_empty_without_pyroute2():

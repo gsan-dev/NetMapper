@@ -61,6 +61,16 @@ except ImportError:  # pragma: no cover
 # haría falta la tabla ipAddressTable de RFC 4293, no implementada aquí).
 IP_ADDR_TABLE_NETMASK_OID = "1.3.6.1.2.1.4.20.1.3"
 
+# rt_type de rtnetlink (ver <linux/rtnetlink.h>). Solo RTN_UNICAST
+# representa una red real alcanzable — el kernel también expone, en la
+# tabla "local" (255), una entrada RTN_LOCAL por cada IP propia y una
+# RTN_BROADCAST por cada dirección de broadcast, ambas como rutas /32
+# "hacia sí mismo" que no son redes a escanear. Sin este filtro,
+# get_routes() devuelve dos entradas /32 de puro ruido por cada interfaz
+# (su propia IP y su broadcast) — se vieron como decenas de "redes"
+# fantasma en un despliegue real con varias interfaces Docker.
+RTN_UNICAST = 1
+
 
 @dataclass(frozen=True)
 class Subnet:
@@ -116,7 +126,15 @@ def discover_local_networks() -> list[Subnet]:
         all_addrs = netifaces.ifaddresses(iface)
         for family in (netifaces.AF_INET, netifaces.AF_INET6):
             for addr in all_addrs.get(family, []):
-                ip, netmask = addr.get("addr"), addr.get("netmask")
+                ip = addr.get("addr")
+                # "netmask" es la clave del paquete netifaces original; el
+                # fork netifaces2 (el que se instala aquí, ver
+                # discovery/requirements.txt) usa "mask" en su lugar — sin
+                # este fallback, discover_local_networks() no encontraba
+                # NINGUNA red directamente conectada en un despliegue real
+                # (netifaces2 instalado), aunque sí funcionaba en los tests
+                # (que mockean netifaces con la clave clásica "netmask").
+                netmask = addr.get("netmask") or addr.get("mask")
                 if not ip or not netmask:
                     continue
                 if family == netifaces.AF_INET6 and "%" in ip:
@@ -147,6 +165,9 @@ def discover_routed_networks(local_networks: list[Subnet] | None = None) -> list
         with IPRoute() as ipr:
             for family in (2, 10):  # AF_INET, AF_INET6
                 for route in ipr.get_routes(family=family):
+                    if route.get("type") != RTN_UNICAST:
+                        continue  # descarta entradas RTN_LOCAL/RTN_BROADCAST del kernel
+
                     dst = route.get_attr("RTA_DST")
                     dst_len = route.get("dst_len")
                     gateway = route.get_attr("RTA_GATEWAY")
