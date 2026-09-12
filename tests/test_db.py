@@ -29,6 +29,7 @@ def _device(mac="aa:bb:cc:dd:ee:01", **overrides):
         "mdns_services": ["nas._smb._tcp.local."],
         "dns_queries": {"example.com": 3},
         "subnet_cidrs": ["192.168.1.0/24"],
+        "last_sensor_id": "default",
     }
     data.update(overrides)
     return data
@@ -107,12 +108,32 @@ def test_mark_stale_devices_inactive(repo):
     repo.upsert_device(_device(mac="aa:aa:aa:aa:aa:aa"))
     repo.upsert_device(_device(mac="bb:bb:bb:bb:bb:bb"))
 
-    repo.mark_stale_devices_inactive({"aa:aa:aa:aa:aa:aa"})
+    repo.mark_stale_devices_inactive({"aa:aa:aa:aa:aa:aa"}, sensor_id="default")
 
     active = {d["mac"] for d in repo.list_devices(active_only=True)}
     all_devices = {d["mac"] for d in repo.list_devices(active_only=False)}
     assert active == {"aa:aa:aa:aa:aa:aa"}
     assert all_devices == {"aa:aa:aa:aa:aa:aa", "bb:bb:bb:bb:bb:bb"}
+
+
+def test_mark_stale_devices_inactive_only_affects_matching_sensor(repo):
+    """Dos sensores distintos comparten la misma BD (segmentos/VLANs
+    aislados) — el sensor A no debe poder marcar inactivo un dispositivo
+    que solo ve el sensor B."""
+    repo.upsert_device(_device(mac="aa:aa:aa:aa:aa:aa", last_sensor_id="sensor-a"))
+    repo.upsert_device(_device(mac="bb:bb:bb:bb:bb:bb", last_sensor_id="sensor-b"))
+
+    # sensor-a ya no ve a "aa..." en su pasada, pero eso no debe tocar a "bb..."
+    repo.mark_stale_devices_inactive(set(), sensor_id="sensor-a")
+
+    active = {d["mac"] for d in repo.list_devices(active_only=True)}
+    assert active == {"bb:bb:bb:bb:bb:bb"}
+
+
+def test_upsert_device_persists_last_sensor_id(repo):
+    repo.upsert_device(_device(last_sensor_id="sensor-a"))
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["last_sensor_id"] == "sensor-a"
 
 
 def test_get_device_by_mac_returns_none_when_missing(repo):

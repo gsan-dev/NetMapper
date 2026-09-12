@@ -137,7 +137,9 @@ class Pipeline:
         )
         self.engine.prune_stale_devices(max_age_seconds=stale_after)
         self._apply_device_authorization()
-        self.repo.mark_stale_devices_inactive(set(self.engine.devices.keys()))
+        self.repo.mark_stale_devices_inactive(
+            set(self.engine.devices.keys()), sensor_id=settings.sensor_id
+        )
         self.repo.record_discovery_pass(time.time())
 
     def _apply_device_authorization(self) -> None:
@@ -173,7 +175,7 @@ class Pipeline:
         """Fase 6: escribe el estado acumulado del FusionEngine en la BD."""
         devices, relations = self.engine.snapshot()
         for device in devices:
-            self.repo.upsert_device(device.to_dict())
+            self.repo.upsert_device({**device.to_dict(), "last_sensor_id": settings.sensor_id})
         for relation in relations:
             self.repo.upsert_relation(relation.to_dict())
 

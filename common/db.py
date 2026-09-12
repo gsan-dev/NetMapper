@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS devices (
     is_authorized INTEGER NOT NULL DEFAULT 1,
     security_alert_count INTEGER NOT NULL DEFAULT 0,
     security_max_severity TEXT NOT NULL DEFAULT 'none',
-    security_last_reason TEXT
+    security_last_reason TEXT,
+    last_sensor_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS relations (
@@ -118,7 +119,7 @@ class Repository(ABC):
     def upsert_device(self, device: dict[str, Any]) -> int: ...
 
     @abstractmethod
-    def mark_stale_devices_inactive(self, active_macs: set[str]) -> None: ...
+    def mark_stale_devices_inactive(self, active_macs: set[str], sensor_id: str) -> None: ...
 
     @abstractmethod
     def list_devices(self, active_only: bool = True) -> list[dict[str, Any]]: ...
@@ -220,8 +221,8 @@ class SQLiteRepository(Repository):
                     mac, ips, vendor, device_type, open_ports, mdns_services,
                     dns_queries, subnet_cidrs, first_seen, last_seen, active,
                     is_authorized, security_alert_count, security_max_severity,
-                    security_last_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                    security_last_reason, last_sensor_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
@@ -235,7 +236,8 @@ class SQLiteRepository(Repository):
                     is_authorized = excluded.is_authorized,
                     security_alert_count = excluded.security_alert_count,
                     security_max_severity = excluded.security_max_severity,
-                    security_last_reason = excluded.security_last_reason
+                    security_last_reason = excluded.security_last_reason,
+                    last_sensor_id = excluded.last_sensor_id
                 """,
                 (
                     device["mac"],
@@ -252,6 +254,7 @@ class SQLiteRepository(Repository):
                     device.get("security_alert_count", 0),
                     device.get("security_max_severity", "none"),
                     device.get("security_last_reason"),
+                    device.get("last_sensor_id"),
                 ),
             )
             row = conn.execute(
@@ -259,9 +262,20 @@ class SQLiteRepository(Repository):
             ).fetchone()
             return row["id"]
 
-    def mark_stale_devices_inactive(self, active_macs: set[str]) -> None:
+    def mark_stale_devices_inactive(self, active_macs: set[str], sensor_id: str) -> None:
+        """Solo retira actividad a los dispositivos cuyo último sensor
+        conocido es `sensor_id` — así varios sensores en segmentos
+        distintos pueden compartir la misma BD sin marcar inactivos los
+        dispositivos que ve el OTRO sensor. (Nota de migración: filas
+        creadas antes de que existiera esta columna tienen
+        last_sensor_id NULL y no coinciden con ningún sensor_id hasta su
+        próximo upsert — se autocorrige solas en la siguiente pasada.)
+        """
         with self._connect() as conn:
-            rows = conn.execute("SELECT mac FROM devices WHERE active = 1").fetchall()
+            rows = conn.execute(
+                "SELECT mac FROM devices WHERE active = 1 AND last_sensor_id = ?",
+                (sensor_id,),
+            ).fetchall()
             stale = [r["mac"] for r in rows if r["mac"] not in active_macs]
             if stale:
                 conn.executemany(
@@ -467,7 +481,7 @@ class Neo4jRepository(Repository):
     def upsert_device(self, device: dict[str, Any]) -> int:
         self._not_implemented()
 
-    def mark_stale_devices_inactive(self, active_macs: set[str]) -> None:
+    def mark_stale_devices_inactive(self, active_macs: set[str], sensor_id: str) -> None:
         self._not_implemented()
 
     def list_devices(self, active_only: bool = True) -> list[dict[str, Any]]:
