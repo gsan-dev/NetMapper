@@ -41,6 +41,12 @@ class Device:
     subnet_cidrs: set[str] = field(default_factory=set)
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
+    # Mejora futura ya implementada: detección de dispositivos no
+    # autorizados. True por defecto — solo se recalcula si el usuario ha
+    # configurado ALLOWED_DEVICES (ver Pipeline._apply_device_authorization
+    # en discovery/main.py). El FusionEngine en sí no conoce la whitelist,
+    # para mantenerlo desacoplado de la configuración global.
+    is_authorized: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -54,6 +60,7 @@ class Device:
             "subnet_cidrs": sorted(self.subnet_cidrs),
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
+            "is_authorized": self.is_authorized,
         }
 
 

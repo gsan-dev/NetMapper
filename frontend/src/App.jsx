@@ -64,6 +64,11 @@ export default function App() {
     return devices.filter((d) => (d.subnet_cidrs || []).includes(subnetFilter));
   }, [devices, subnetFilter]);
 
+  const unauthorizedCount = useMemo(
+    () => filteredDevices.filter((d) => d.is_authorized === false).length,
+    [filteredDevices]
+  );
+
   function downloadDataUrl(dataUrl, filename) {
     const a = document.createElement("a");
     a.href = dataUrl;
@@ -97,6 +102,9 @@ export default function App() {
           <span>{filteredDevices.length} dispositivos</span>
           <span>{relations.length} relaciones</span>
           <span>{networks.length} redes</span>
+          {unauthorizedCount > 0 && (
+            <span className="unauthorized-badge">⚠ {unauthorizedCount} no autorizado(s)</span>
+          )}
         </div>
         <div className="topbar-actions">
           <button onClick={handleExportPng}>Exportar PNG</button>

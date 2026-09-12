@@ -55,6 +55,19 @@ def test_upsert_device_round_trips_json_fields(repo):
     assert device["dns_queries"] == {"example.com": 3}
     assert device["vendor"] == "Synology Incorporated"
     assert device["active"] == 1
+    assert device["is_authorized"] is True  # por defecto, sin whitelist configurada
+
+
+def test_upsert_device_persists_unauthorized_flag(repo):
+    repo.upsert_device(_device(is_authorized=False))
+
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["is_authorized"] is False
+
+    # Una pasada posterior puede reautorizarlo si ya no está flaggeado
+    repo.upsert_device(_device(is_authorized=True))
+    device = repo.get_device_by_mac("aa:bb:cc:dd:ee:01")
+    assert device["is_authorized"] is True
 
 
 def test_upsert_device_keeps_vendor_when_new_value_is_none(repo):

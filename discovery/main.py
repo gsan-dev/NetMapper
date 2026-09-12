@@ -126,7 +126,18 @@ class Pipeline:
             else settings.scan_interval_seconds * 3
         )
         self.engine.prune_stale_devices(max_age_seconds=stale_after)
+        self._apply_device_authorization()
         self.repo.mark_stale_devices_inactive(set(self.engine.devices.keys()))
+
+    def _apply_device_authorization(self) -> None:
+        """Mejora futura ya implementada: detección de dispositivos no
+        autorizados. Sin ALLOWED_DEVICES configurada, no se toca nada (todo
+        sigue autorizado por defecto) para no generar falsos positivos en
+        quien no ha decidido activar esta comprobación."""
+        if not settings.allowed_devices:
+            return
+        for mac, device in self.engine.devices.items():
+            device.is_authorized = mac.lower() in settings.allowed_devices
 
     def persist_current_state(self) -> None:
         """Fase 6: escribe el estado acumulado del FusionEngine en la BD."""

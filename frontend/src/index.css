@@ -113,6 +113,11 @@ button.active {
   font-variant-numeric: tabular-nums;
 }
 
+.unauthorized-badge {
+  color: #ef4444;
+  font-weight: 600;
+}
+
 .topbar-actions {
   display: flex;
   gap: 0.5rem;

@@ -21,6 +21,10 @@ function buildElements(devices, relations) {
       vendor: d.vendor || "Fabricante desconocido",
       ips: (d.ips || []).join(", "),
       openPorts: (d.open_ports || []).join(", ") || "ninguno detectado",
+      // false solo cuando el backend lo marca explícitamente (whitelist
+      // ALLOWED_DEVICES configurada); si el campo no viene, se asume
+      // autorizado para no pintar de "sospechoso" datos antiguos/parciales.
+      isAuthorized: d.is_authorized !== false,
     },
   }));
 
@@ -52,8 +56,9 @@ const STYLE = [
       "text-outline-width": 0,
       width: 28,
       height: 28,
-      "border-width": 2,
-      "border-color": "#0f172a",
+      "border-width": (ele) => (ele.data("isAuthorized") === false ? 3 : 2),
+      "border-color": (ele) => (ele.data("isAuthorized") === false ? "#ef4444" : "#0f172a"),
+      "border-style": (ele) => (ele.data("isAuthorized") === false ? "dashed" : "solid"),
     },
   },
   {

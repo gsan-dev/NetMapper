@@ -37,6 +37,7 @@ def pipeline(tmp_path, pipeline_module):
 
     settings.db_path = str(tmp_path / "pipeline_test.db")
     settings.allowed_networks = [ipaddress.ip_network("192.168.1.0/24")]
+    settings.allowed_devices = set()
     settings.mdns_enabled = False
     settings.passive_capture_enabled = False
     db_module._repository_singleton = None
@@ -75,6 +76,39 @@ def test_discovery_pass_respects_allowed_networks_whitelist(pipeline, pipeline_m
     # discover_hosts solo se llama para la red permitida
     mock_discover_hosts.assert_called_once()
     assert mock_discover_hosts.call_args.args[0].cidr == "192.168.1.0/24"
+
+
+def test_discovery_pass_flags_unauthorized_devices_when_whitelist_configured(
+    pipeline, pipeline_module
+):
+    from common.config import settings
+
+    settings.allowed_devices = {"aa:bb:cc:dd:ee:01"}  # el otro dispositivo no está en la lista
+    subnet = Subnet(cidr="192.168.1.0/24", discovery_method="direct")
+    hosts = [_host(ip="192.168.1.10", mac="aa:bb:cc:dd:ee:01"), _host(ip="192.168.1.20", mac="bb:bb:bb:bb:bb:bb")]
+
+    with patch.object(pipeline_module, "discover_networks", return_value=[subnet]), patch.object(
+        pipeline_module, "discover_hosts", return_value=hosts
+    ), patch.object(
+        pipeline_module,
+        "fingerprint_host",
+        side_effect=lambda host, **kwargs: _profile(mac=host.mac, ip=host.ip),
+    ):
+        pipeline.run_discovery_pass()
+
+    assert pipeline.engine.devices["aa:bb:cc:dd:ee:01"].is_authorized is True
+    assert pipeline.engine.devices["bb:bb:bb:bb:bb:bb"].is_authorized is False
+
+
+def test_discovery_pass_does_not_flag_anything_without_whitelist(pipeline, pipeline_module):
+    subnet = Subnet(cidr="192.168.1.0/24", discovery_method="direct")
+
+    with patch.object(pipeline_module, "discover_networks", return_value=[subnet]), patch.object(
+        pipeline_module, "discover_hosts", return_value=[_host()]
+    ), patch.object(pipeline_module, "fingerprint_host", return_value=_profile()):
+        pipeline.run_discovery_pass()
+
+    assert pipeline.engine.devices["aa:bb:cc:dd:ee:01"].is_authorized is True
 
 
 def test_discovery_pass_ingests_hosts_into_fusion_engine(pipeline, pipeline_module):

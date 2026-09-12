@@ -68,6 +68,14 @@ export default function FilterPanel({
             <dd>{DEVICE_LABELS[selectedDevice.deviceType] || selectedDevice.deviceType}</dd>
             <dt>Puertos abiertos</dt>
             <dd>{selectedDevice.openPorts}</dd>
+            <dt>Estado</dt>
+            <dd>
+              {selectedDevice.isAuthorized === false ? (
+                <span className="unauthorized-badge">⚠ No autorizado</span>
+              ) : (
+                "Autorizado"
+              )}
+            </dd>
           </dl>
         </div>
       )}

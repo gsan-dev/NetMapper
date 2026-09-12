@@ -17,6 +17,8 @@ def test_ingest_host_creates_device_with_ip_and_subnet():
     assert device.ips == {"192.168.1.10"}
     assert device.subnet_cidrs == {"192.168.1.0/24"}
     assert engine.ip_to_mac["192.168.1.10"] == "aa:bb:cc:dd:ee:01"
+    assert device.is_authorized is True  # sin whitelist configurada, todo se asume autorizado
+    assert device.to_dict()["is_authorized"] is True
 
 
 def test_ingest_host_without_mac_uses_ip_placeholder():

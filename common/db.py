@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS devices (
     subnet_cidrs TEXT NOT NULL DEFAULT '[]',
     first_seen REAL NOT NULL,
     last_seen REAL NOT NULL,
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    is_authorized INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS relations (
@@ -85,6 +86,7 @@ def _device_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d["mdns_services"] = json.loads(d["mdns_services"])
     d["dns_queries"] = json.loads(d["dns_queries"])
     d["subnet_cidrs"] = json.loads(d["subnet_cidrs"])
+    d["is_authorized"] = bool(d["is_authorized"])
     return d
 
 
@@ -189,8 +191,9 @@ class SQLiteRepository(Repository):
                 """
                 INSERT INTO devices (
                     mac, ips, vendor, device_type, open_ports, mdns_services,
-                    dns_queries, subnet_cidrs, first_seen, last_seen, active
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    dns_queries, subnet_cidrs, first_seen, last_seen, active,
+                    is_authorized
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(mac) DO UPDATE SET
                     ips = excluded.ips,
                     vendor = COALESCE(excluded.vendor, devices.vendor),
@@ -200,7 +203,8 @@ class SQLiteRepository(Repository):
                     dns_queries = excluded.dns_queries,
                     subnet_cidrs = excluded.subnet_cidrs,
                     last_seen = excluded.last_seen,
-                    active = 1
+                    active = 1,
+                    is_authorized = excluded.is_authorized
                 """,
                 (
                     device["mac"],
@@ -213,6 +217,7 @@ class SQLiteRepository(Repository):
                     json.dumps(sorted(device.get("subnet_cidrs", []))),
                     device.get("first_seen", now),
                     device.get("last_seen", now),
+                    int(device.get("is_authorized", True)),
                 ),
             )
             row = conn.execute(
