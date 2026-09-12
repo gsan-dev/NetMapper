@@ -239,3 +239,33 @@ def discover_networks(
             merged[subnet.key] = subnet
 
     return list(merged.values())
+
+
+if __name__ == "__main__":
+    # Paso de validación manual (ver "Pasos a seguir para ejecutarlo" en el
+    # README): imprime las subredes detectadas y si están autorizadas para
+    # escaneo activo, antes de lanzar el pipeline completo.
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _REPO_ROOT = _Path(__file__).resolve().parent.parent
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+
+    from common.config import settings  # noqa: E402
+
+    detected = discover_networks(
+        router_ip=settings.gateway_ip or None,
+        snmp_enabled=settings.snmp_enabled,
+        snmp_community=settings.snmp_community,
+        snmp_timeout=settings.snmp_timeout_seconds,
+    )
+
+    print(f"{len(detected)} subred(es) detectada(s):\n")
+    for net in detected:
+        allowed = settings.is_network_allowed(net.network)
+        flag = "ESCANEABLE" if allowed else "solo conocida (no en ALLOWED_NETWORKS)"
+        print(
+            f"  {net.cidr:20s} método={net.discovery_method:8s} "
+            f"interfaz={net.interface or '-':10s} gateway={net.gateway or '-':16s} [{flag}]"
+        )
