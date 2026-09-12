@@ -142,6 +142,8 @@ class Pipeline:
             self.engine.ip_to_mac.get(settings.gateway_ip) if settings.gateway_ip else None
         )
         result = analyze(devices, relations, gateway_mac=gateway_mac)
+        result["devices"] = [d.to_dict() for d in devices]
+        result["relations"] = [r.to_dict() for r in relations]
         self.repo.insert_graph_snapshot(result)
         logger.info(
             "Análisis de grafo: %d nodos, %d aristas, %d comunidades",

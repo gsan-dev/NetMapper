@@ -106,6 +106,8 @@ def test_insert_and_list_graph_snapshots(repo):
             "communities": {"mac-1": 0, "mac-2": 0},
             "centrality": {"mac-1": 0.0, "mac-2": 0.0},
             "layers": {"mac-1": 0, "mac-2": 1},
+            "devices": [{"mac": "mac-1"}, {"mac": "mac-2"}],
+            "relations": [{"src_mac": "mac-1", "dst_mac": "mac-2", "bytes_total": 10, "connections": 1}],
         }
     )
     repo.insert_graph_snapshot(
@@ -123,9 +125,12 @@ def test_insert_and_list_graph_snapshots(repo):
     assert len(snapshots) == 2
     assert snapshots[0]["node_count"] == 2  # el más antiguo primero
     assert snapshots[1]["node_count"] == 3
+    assert snapshots[0]["devices"] == [{"mac": "mac-1"}, {"mac": "mac-2"}]
+    assert snapshots[0]["relations"][0]["bytes_total"] == 10
 
     latest = repo.get_latest_graph_snapshot()
     assert latest["node_count"] == 3
+    assert latest["devices"] == []
 
 
 def test_get_latest_graph_snapshot_returns_none_when_empty(repo):

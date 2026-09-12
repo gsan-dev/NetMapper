@@ -134,6 +134,7 @@ def test_run_analysis_pass_persists_snapshot(pipeline):
     snapshot = pipeline.repo.get_latest_graph_snapshot()
     assert snapshot is not None
     assert snapshot["node_count"] == 1
+    assert snapshot["devices"][0]["mac"] == "aa:bb:cc:dd:ee:01"
 
 
 def test_run_once_executes_full_pipeline(pipeline, pipeline_module):

@@ -66,7 +66,9 @@ CREATE TABLE IF NOT EXISTS graph_snapshots (
     edge_count INTEGER NOT NULL,
     communities TEXT NOT NULL,
     centrality TEXT NOT NULL,
-    layers TEXT NOT NULL
+    layers TEXT NOT NULL,
+    devices TEXT NOT NULL DEFAULT '[]',
+    relations TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_graph_snapshots_created_at ON graph_snapshots(created_at);
 """
@@ -282,11 +284,18 @@ class SQLiteRepository(Repository):
     # --- Snapshots del análisis de grafo (para el modo time-lapse) ---
 
     def insert_graph_snapshot(self, snapshot: dict[str, Any]) -> int:
+        """Persiste una pasada de análisis completa, incluyendo la propia
+        topología (devices/relations) en ese momento — no solo las
+        métricas — para que el modo time-lapse del frontend pueda
+        reconstruir cómo era el mapa en cualquier punto del histórico.
+        """
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO graph_snapshots (created_at, node_count, edge_count, communities, centrality, layers)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO graph_snapshots (
+                    created_at, node_count, edge_count, communities, centrality,
+                    layers, devices, relations
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     snapshot.get("created_at", time.time()),
@@ -295,6 +304,8 @@ class SQLiteRepository(Repository):
                     json.dumps(snapshot.get("communities", {})),
                     json.dumps(snapshot.get("centrality", {})),
                     json.dumps(snapshot.get("layers", {})),
+                    json.dumps(snapshot.get("devices", [])),
+                    json.dumps(snapshot.get("relations", [])),
                 ),
             )
             return cur.lastrowid
@@ -304,6 +315,8 @@ class SQLiteRepository(Repository):
         d["communities"] = json.loads(d["communities"])
         d["centrality"] = json.loads(d["centrality"])
         d["layers"] = json.loads(d["layers"])
+        d["devices"] = json.loads(d["devices"])
+        d["relations"] = json.loads(d["relations"])
         return d
 
     def list_graph_snapshots(self, limit: int = 50) -> list[dict[str, Any]]:
