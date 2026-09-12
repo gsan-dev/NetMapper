@@ -1,190 +1,200 @@
-# 🗺️ NetMapper — Descubrimiento y Mapeo Automático de Redes Multi-Segmento
+# 🗺️ NetMapper — Automatic Multi-Segment Network Discovery & Topology Mapping
 
-> Herramienta que detecta automáticamente todas las redes accesibles desde tu máquina (aunque estén en rangos distintos: 192.168.0.x, 192.168.1.x, 10.0.0.x, 172.26.0.x...), descubre los dispositivos de cada una combinando técnicas activas y pasivas, y construye un mapa de topología interactivo y siempre actualizado.
+> A tool that automatically detects every network reachable from your machine — even across different ranges (192.168.0.x, 192.168.1.x, 10.0.0.x, 172.26.0.x...) — discovers the devices on each one by combining active and passive techniques, and builds an interactive, always-up-to-date topology map.
 
 ---
 
-## 📋 Tabla de contenidos
+## 📋 Table of contents
 
-1. [Motivación y alcance](#-motivación-y-alcance)
-2. [Consideraciones legales y éticas](#-consideraciones-legales-y-éticas)
-3. [Arquitectura general](#-arquitectura-general)
-4. [Análisis detallado del programa](#-análisis-detallado-del-programa)
-5. [Stack tecnológico](#-stack-tecnológico)
-6. [Estructura del repositorio](#-estructura-del-repositorio)
-7. [Roadmap y plan de commits](#-roadmap-y-plan-de-commits)
-8. [Guía de instalación](#-guía-de-instalación)
-9. [Pasos a seguir para ejecutarlo](#-pasos-a-seguir-para-ejecutarlo)
-10. [Uso del panel](#-uso-del-panel)
-11. [Capturas](#-capturas)
+1. [Motivation & scope](#-motivation--scope)
+2. [Legal & ethical considerations](#-legal--ethical-considerations)
+3. [Architecture](#-architecture)
+4. [Detailed program walkthrough](#-detailed-program-walkthrough)
+5. [Tech stack](#-tech-stack)
+6. [Repository structure](#-repository-structure)
+7. [Roadmap & commit plan](#-roadmap--commit-plan)
+8. [Installation guide](#-installation-guide)
+9. [Getting it running](#-getting-it-running)
+10. [Using the dashboard](#-using-the-dashboard)
+11. [Screenshots](#-screenshots)
 12. [Testing](#-testing)
-13. [Mejoras futuras](#-mejoras-futuras)
-14. [Licencia](#-licencia)
+13. [Built-in enhancements](#-built-in-enhancements)
+14. [Future improvements](#-future-improvements)
+15. [License](#-license)
 
 ---
 
-## 🎯 Motivación y alcance
+## 🎯 Motivation & scope
 
-La mayoría de herramientas de escaneo de red asumen que trabajas sobre un único rango (`192.168.1.0/24`) configurado a mano. En redes reales —homelabs con VLANs, Docker, VPNs, o redes corporativas— conviven varios segmentos a la vez, y el usuario normalmente no conoce todos de antemano.
+Most network scanning tools assume you're working on a single, manually-configured range (`192.168.1.0/24`). Real networks — homelabs with VLANs, Docker, VPNs, or corporate networks — have several segments alive at once, and you usually don't know all of them up front.
 
-**NetMapper** resuelve esto en dos etapas:
+**NetMapper** solves this in two stages:
 
-1. **Descubre qué redes existen y son alcanzables** desde la máquina donde corre, sin que el usuario tenga que indicarlas manualmente.
-2. **Mapea cada red descubierta**, combinando descubrimiento activo (ARP, ICMP, SNMP, port scanning) y pasivo (captura de tráfico), y construye un grafo de topología interactivo que se actualiza solo.
+1. **Discovers which networks exist and are reachable** from the machine it runs on, without you having to list them by hand.
+2. **Maps every discovered network**, combining active discovery (ARP/NDP, ICMP, SNMP, port scanning) with passive discovery (traffic capture), and builds an interactive topology graph that keeps itself up to date.
 
-El resultado final es un panel web donde ves, en tiempo real, todos los dispositivos accesibles del entorno, agrupados por red, con sus relaciones de comunicación.
-
----
-
-## ⚖️ Consideraciones legales y éticas
-
-Antes de nada, esto tiene que quedar explícito en el propio repositorio (y es importante mencionarlo en cualquier entrevista):
-
-- Esta herramienta está pensada **exclusivamente para auditar redes de tu propiedad** (tu homelab, tu red doméstica, o una red donde tengas autorización explícita).
-- El escaneo activo de redes ajenas sin permiso es **ilegal** en la gran mayoría de países.
-- El propio README del proyecto debe incluir un aviso de uso responsable, y el programa debe, idealmente, pedir confirmación explícita antes de escanear cualquier rango nuevo detectado.
+The end result is a web dashboard where you can see, in real time, every reachable device in your environment, grouped by network, with their actual communication relationships — plus (see [Built-in enhancements](#-built-in-enhancements)) which devices aren't on your authorized list, which ones an IDS has flagged as anomalous, and how each device's fingerprint has changed over time.
 
 ---
 
-## 🏗️ Arquitectura general
+## ⚖️ Legal & ethical considerations
+
+This needs to be explicit in the repository itself (and it's worth bringing up in any interview about this project):
+
+- This tool is meant **exclusively for auditing networks you own** (your homelab, your home network, or a network you have explicit authorization to scan).
+- Actively scanning networks that aren't yours without permission is **illegal** in most countries.
+- `ALLOWED_NETWORKS` isn't a cosmetic setting — it's the actual safety gate. Any network the pipeline detects but that isn't listed there gets recorded as "known" and is **never** actively scanned. See [`_apply_device_authorization`/`is_network_allowed`](#-detailed-program-walkthrough) below for exactly how that's enforced in code, not just in this paragraph.
+
+---
+
+## 🏗️ Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                 FASE 0 — DESCUBRIMIENTO DE REDES                 │
-│  Interfaces locales · Tabla de rutas · Consulta a routers ·      │
-│  Expansión recursiva por gateways                                 │
+│                  STAGE 0 — NETWORK DISCOVERY                     │
+│  Local interfaces (IPv4+IPv6) · Routing table · Router queries · │
+│  Whitelist check against ALLOWED_NETWORKS                        │
 └───────────────────────────────┬────────────────────────────────────┘
-                                 │  lista de subredes objetivo
+                                 │  authorized target subnets
 ┌───────────────────────────────▼────────────────────────────────────┐
-│                 FASE 1 — DESCUBRIMIENTO DE HOSTS                  │
-│  ARP scan (redes locales) · ICMP sweep · Escaneo async (remotas)  │
+│                  STAGE 1 — HOST DISCOVERY                          │
+│  ARP (local IPv4) · NDP/ICMPv6 (local IPv6) · async TCP (remote)  │
 └───────────────────────────────┬────────────────────────────────────┘
-                                 │  hosts vivos por subred
+                                 │  live hosts per subnet
 ┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 2 — CARACTERIZACIÓN DE DISPOSITIVOS             │
-│  Port scanning selectivo · Fingerprinting (OUI/MAC) ·             │
-│  mDNS/UPnP · SNMP a switches/routers gestionables                 │
+│              STAGE 2 — DEVICE FINGERPRINTING                      │
+│  Selective port scanning · OUI/MAC vendor lookup ·                │
+│  mDNS/UPnP listening · rule-based device-type inference           │
 └───────────────────────────────┬────────────────────────────────────┘
-                                 │  metadata por dispositivo
+                                 │  per-device metadata
 ┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 3 — DESCUBRIMIENTO PASIVO                       │
-│  Captura de tráfico (Scapy) · Análisis de consultas DNS ·         │
-│  Relaciones "quién habla con quién"                               │
-└───────────────────────────────┬────────────────────────────────────┘
-                                 │
-┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 4 — MOTOR DE FUSIÓN DE DATOS                    │
-│  Combina todas las fuentes en un modelo de grafo coherente,       │
-│  resolviendo conflictos (IPs reasignadas por DHCP, duplicados)    │
+│              STAGE 3 — PASSIVE DISCOVERY                          │
+│  Traffic capture (Scapy, IPv4+IPv6) · DNS query analysis ·        │
+│  "who talks to whom" relationships                                │
 └───────────────────────────────┬────────────────────────────────────┘
                                  │
 ┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 5 — ANÁLISIS DE GRAFO                           │
-│  Detección de comunidades (Louvain) · Centralidad ·               │
-│  Inferencia de jerarquía (capas por nº de saltos)                 │
+│              STAGE 4 — FUSION ENGINE                              │
+│  Merges every source into one coherent graph model, resolving    │
+│  conflicts (DHCP-reassigned IPs, duplicates), tracking            │
+│  authorization + correlated security alerts per device            │
 └───────────────────────────────┬────────────────────────────────────┘
                                  │
 ┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 6 — PERSISTENCIA                                │
-│  Neo4j (o NetworkX + PostgreSQL) — modelo de grafo real           │
+│              STAGE 5 — GRAPH ANALYSIS                             │
+│  Community detection (Louvain) · Betweenness centrality ·         │
+│  Hierarchy inference (hop-count layers)                           │
 └───────────────────────────────┬────────────────────────────────────┘
                                  │
 ┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 7 — BACKEND API                                 │
-│  FastAPI + WebSocket — expone el grafo y empuja cambios en vivo   │
+│              STAGE 6 — PERSISTENCE                                │
+│  SQLite today (Repository interface; Neo4jRepository is an        │
+│  explicit stub for a real graph database later)                  │
 └───────────────────────────────┬────────────────────────────────────┘
                                  │
 ┌───────────────────────────────▼────────────────────────────────────┐
-│              FASE 8 — FRONTEND                                    │
-│  React + Cytoscape.js — mapa interactivo, filtros por red/capa,   │
-│  time-lapse, exportación                                          │
+│              STAGE 7 — BACKEND API                                │
+│  FastAPI + WebSocket — serves the graph and pushes live updates  │
+└───────────────────────────────┬────────────────────────────────────┘
+                                 │
+┌───────────────────────────────▼────────────────────────────────────┐
+│              STAGE 8 — FRONTEND                                   │
+│  React + Cytoscape.js — interactive map, network/layer filters,  │
+│  time-lapse, PNG/GraphML export, unauthorized-device and         │
+│  security-alert overlays                                          │
 └──────────────────────────────────────────────────────────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │   NetGuardian (optional)  │
+                    │   IDS anomaly alerts,     │
+                    │   polled and correlated   │
+                    │   by source IP            │
+                    └───────────────────────────┘
 ```
 
----
-
-## 🔬 Análisis detallado del programa
-
-Esta sección explica **qué hace cada módulo internamente** y por qué está diseñado así — es la parte que conviene entender bien para poder defenderla en una entrevista.
-
-### `network_discovery.py` — Descubrimiento de redes (Fase 0)
-
-Responsable de responder "¿en qué redes estoy y a cuáles puedo llegar?". Combina tres fuentes:
-
-- **Interfaces locales** (`netifaces`): cada interfaz de red de la máquina (Ethernet, Wi-Fi, VPN, bridges de Docker) tiene una IP y máscara propias, de las que se deriva un rango CIDR directamente conectado.
-- **Tabla de rutas** (`pyroute2`): revela redes *no* conectadas directamente pero alcanzables a través de un gateway — esto es lo que te permite ver tu 10.0.0.x aunque tu máquina esté físicamente en 192.168.1.x.
-- **Consulta a routers gestionables** (SNMP/API): si el router lo permite, es la fuente más fiable, porque el router conoce con certeza todas las subredes y VLANs configuradas.
-
-El resultado de esta fase es una lista de objetos `Subred` con metadata: CIDR, cómo se descubrió (directa/ruta/router), y si es alcanzable o solo "conocida".
-
-### `host_discovery.py` — Descubrimiento de hosts (Fase 1)
-
-Por cada subred objetivo:
-- Si es una red **directamente conectada**, usa ARP scanning (capa 2), que es casi instantáneo y muy fiable dentro del mismo segmento físico.
-- Si es una red **remota** (accesible solo vía routing), usa ICMP sweep o escaneo TCP asíncrono, ya que ARP no funciona más allá de tu segmento local.
-
-Este módulo es el que decide *cómo* escanear según el tipo de red, en vez de aplicar la misma técnica a todo — es una de las decisiones de diseño que vale la pena resaltar.
-
-### `device_fingerprint.py` — Caracterización de dispositivos (Fase 2)
-
-Para cada host vivo:
-- Extrae el fabricante a partir de los primeros bytes de la MAC (base de datos OUI del IEEE).
-- Hace un escaneo de puertos selectivo (no exhaustivo, para no ser agresivo) sobre los puertos más comunes.
-- Combina banners de servicio + fabricante + puertos abiertos con un sistema de reglas simple para inferir el tipo de dispositivo (router, NAS, cámara IP, impresora, servidor, móvil).
-- Escucha anuncios mDNS/UPnP pasivamente, que muchos dispositivos domésticos emiten solos y dan información gratis sin necesidad de escanear activamente.
-
-### `passive_capture.py` — Descubrimiento pasivo (Fase 3)
-
-Con Scapy en modo escucha, agrupa tráfico observado por pares de IPs en ventanas de tiempo, generando aristas del tipo `(origen, destino, bytes, nº_conexiones)`. Esto es lo que permite mostrar **relaciones reales de comunicación**, no solo presencia.
-
-### `fusion_engine.py` — Motor de fusión (Fase 4)
-
-Es el módulo más delicado del proyecto. Recibe datos de las tres fuentes anteriores (que pueden llegar en momentos distintos y con inconsistencias) y:
-- Deduplica dispositivos usando la MAC como identificador estable (más fiable que la IP, que puede cambiar por DHCP).
-- Resuelve conflictos temporales (ej: una IP que antes pertenecía a un dispositivo y ahora a otro).
-- Construye el grafo final combinando nodos (dispositivos) y aristas (relaciones activas + observadas pasivamente).
-
-### `graph_analysis.py` — Análisis de grafo (Fase 5)
-
-Sobre el grafo ya construido:
-- **Detección de comunidades** (algoritmo de Louvain, vía `networkx` o `python-louvain`): agrupa automáticamente dispositivos que interactúan mucho entre sí.
-- **Centralidad de intermediación**: identifica qué nodos son puntos críticos de la red (si caen, fragmentan la conectividad).
-- **Inferencia de capas**: usando el nº de saltos (TTL/traceroute) desde el nodo raíz, posiciona los dispositivos en niveles jerárquicos (core → distribución → acceso) para que el mapa se dibuje de forma ordenada y no como una maraña plana.
-
-### Backend (`FastAPI`)
-
-Expone el grafo vía REST (`GET /networks`, `GET /devices`, `GET /graph`) y un canal WebSocket (`/ws/live`) que empuja al frontend cualquier cambio detectado (nuevo dispositivo, nueva relación, dispositivo caído) en cuanto ocurre, sin necesidad de refrescar la página.
-
-### Frontend (`React` + `Cytoscape.js`)
-
-Renderiza el grafo con layouts automáticos (jerárquico o "force-directed"), permite filtrar por subred o por capa, colorea nodos por tipo de dispositivo, y ofrece un modo "time-lapse" que reproduce cómo ha cambiado la topología a lo largo del tiempo usando el histórico guardado en base de datos.
+**Why it grew past the original plan:** a `common/` package appeared early on so discovery, analysis and backend could share configuration, persistence and severity logic without duplicating it (the same pattern used in [NetGuardian](https://github.com/gsan-dev/NetGuardian)), and Neo4j was deliberately deprioritized in favor of SQLite-first — see the [database note](#️-installation-guide) below.
 
 ---
 
-## 🧰 Stack tecnológico
+## 🔬 Detailed program walkthrough
 
-| Capa | Tecnología | Por qué |
+This section explains **what each module actually does internally** and why it's built that way — the part worth understanding well enough to defend in an interview.
+
+### `network_discovery.py` — Network discovery (Stage 0)
+
+Answers "which networks am I on, and which can I reach?" by combining three sources, from least to most authoritative:
+
+- **Routing table** (`pyroute2`, Linux only, both `AF_INET` and `AF_INET6`): reveals networks that are *not* directly connected but reachable through a gateway — this is what lets you see a 10.0.0.x network even though your machine sits physically on 192.168.1.x.
+- **Local interfaces** (`netifaces`): every network interface (Ethernet, Wi-Fi, VPN, Docker bridges) has its own IP+mask, from which a directly-connected CIDR is derived — IPv4 and IPv6 addresses alike (IPv6 link-local addresses, including the `%iface` scope-id netifaces attaches to them, are correctly excluded).
+- **SNMP query to a managed router** (optional, IPv4 only — `ipAddrTable` is a classic MIB-II table; IPv6 would need RFC 4293's `ipAddressTable`, not implemented): the most reliable source when available, since the router knows its configured subnets/VLANs with certainty.
+
+When two sources describe the same network, the more reliable one wins, but every distinct CIDR is kept.
+
+Every detected network is checked against `ALLOWED_NETWORKS` (`Settings.is_network_allowed`) and persisted either way — authorized ones get actively scanned, the rest are recorded as "known" and never touched.
+
+### `host_discovery.py` — Host discovery (Stage 1)
+
+Picks a technique per subnet instead of applying the same one everywhere:
+
+- **Directly-connected IPv4**: ARP scan (layer 2) — near-instant and very reliable within the same physical segment.
+- **Directly-connected IPv6**: ARP doesn't exist in IPv6 (NDP replaces it), and a typical /64 has 2⁶⁴ addresses — far too many to brute-force. Instead, an ICMPv6 Echo Request goes out to the link's all-nodes multicast address (`ff02::1`), and every live host on the link answers with its own source address.
+- **Remote networks** (IPv4 or IPv6, reachable only through routing): neither ARP nor link-local multicast reach past the local segment, so an async TCP probe against common ports is used instead (a RST also counts as "host alive"). A configurable size cap skips subnets too large to probe reasonably (a remote /64 is never brute-forced).
+
+### `device_fingerprint.py` — Device characterization (Stage 2)
+
+For every live host:
+- Resolves the vendor from the first bytes of the MAC (IEEE OUI database, via `manuf`).
+- Runs a selective (not exhaustive, to stay non-aggressive) port scan over the most common ports.
+- Combines vendor + open ports through a simple, explainable scoring rule engine (`common/device_types.py`) to infer the device type (router, NAS, IP camera, printer, server, mobile, IoT...).
+- Passively listens for mDNS/UPnP announcements, which many home devices broadcast on their own — free fingerprinting information without having to scan actively.
+
+### `passive_capture.py` — Passive discovery (Stage 3)
+
+Using Scapy in listen mode, groups observed traffic by IP pair into time windows, producing edges of the form `(source, destination, bytes, connection_count)` — this is what lets the map show **real communication relationships**, not just presence. It parses both IPv4 and IPv6 packets, and also tracks which domains each source IP resolves via DNS — a free fingerprinting signal (a device that only resolves Apple domains is probably an iPhone/Mac).
+
+### `fusion_engine.py` — Fusion engine (Stage 4)
+
+The most delicate module in the project. It receives data from the active sources above and from passive capture — which can arrive at different times and with inconsistencies — and:
+- Deduplicates devices using the **MAC as the stable identifier** (more reliable than the IP, which can change via DHCP). Hosts without a real MAC (discovered via remote TCP probing, outside the local L2 segment) get an `"unknown-<ip>"` placeholder identity instead.
+- Resolves DHCP reassignment: if an IP that belonged to one device is now reported by another, it's reassigned and retired from the previous one.
+- Builds the final graph combining nodes (devices) and edges (both active relations and passively observed ones) — an IP with no known device (e.g. an Internet server) is kept as-is as an "external" graph node.
+- Tracks each device's authorization status and any correlated security alerts (see [Built-in enhancements](#-built-in-enhancements)) — without knowing about the whitelist or NetGuardian itself, to keep it decoupled from global configuration.
+
+### `graph_analysis.py` — Graph analysis (Stage 5)
+
+Over the already-built graph:
+- **Community detection** (Louvain algorithm, via `python-louvain`, weighted by connection count): automatically groups devices that interact heavily with each other.
+- **Betweenness centrality**: identifies which nodes are critical bridge points (if they go down, they fragment connectivity).
+- **Layer inference**: using hop-count from a root node (typically the gateway), positions devices into hierarchical levels so the map draws in an ordered way instead of a flat tangle. Falls back to the highest-degree node as a pseudo-root when no gateway is configured, and marks unreachable nodes with layer `-1` instead of failing.
+
+### Backend (FastAPI)
+
+Serves the graph over REST (`GET /api/networks`, `/api/devices`, `/api/devices/{mac}`, `/api/devices/{mac}/history`, `/api/graph`, `/api/graph/snapshots`) and a WebSocket channel (`/ws`) that pushes the full current graph state to every connected client every few seconds. Sensor (discovery pipeline) and backend are fully decoupled: one writes to SQLite, the other only reads and broadcasts.
+
+### Frontend (React + Cytoscape.js)
+
+Renders the graph with automatic layouts (hierarchical/breadthfirst or force-directed/cose), lets you filter by subnet, colors nodes by device type, flags unauthorized devices with a dashed red border, draws a severity-colored halo around devices with recent NetGuardian alerts, and offers a **time-lapse** mode that replays how the topology changed over time using the snapshot history already stored in the database — including full historical topology, not just metrics, since every snapshot stores the actual devices/relations at that point in time.
+
+---
+
+## 🧰 Tech stack
+
+| Layer | Technology | Why |
 |---|---|---|
-| Descubrimiento de redes | netifaces, pyroute2 | Acceso directo a interfaces y tabla de rutas del sistema |
-| Escaneo de hosts | Scapy (ARP), asyncio + sockets (remoto) | ARP es rápido en local; async necesario para escalar en redes remotas |
-| Fingerprinting | manuf (OUI lookup), reglas propias | Identificación de fabricante y tipo de dispositivo sin depender de servicios externos |
-| Captura pasiva | Scapy / pyshark | Estándar de facto para manipulación y sniffing de paquetes en Python |
-| Grafo y análisis | NetworkX (+ python-louvain) | Todo el análisis de comunidades/centralidad ya implementado y probado |
-| Persistencia | Neo4j (recomendado) o PostgreSQL | Un grafo se modela naturalmente como grafo; Neo4j simplifica consultas de topología |
-| Backend | FastAPI | Async nativo, WebSockets sencillos, documentación automática |
-| Frontend | React + Vite + Cytoscape.js | Layouts de grafo listos de fábrica, ahorra semanas de desarrollo |
-| Contenedores | Docker + docker-compose | Despliegue reproducible en el homelab |
+| Network discovery | netifaces, pyroute2 | Direct access to interfaces and the system routing table (IPv4 + IPv6) |
+| Host scanning | Scapy (ARP/NDP), asyncio + sockets (remote) | ARP/NDP are fast locally; async is needed to scale on remote networks |
+| Fingerprinting | manuf (OUI lookup), custom rules | Vendor and device-type identification without depending on external services |
+| Passive capture | Scapy | De facto standard for packet manipulation/sniffing in Python |
+| Graph & analysis | NetworkX (+ python-louvain) | Community/centrality analysis already implemented and battle-tested |
+| Persistence | SQLite (default, works today) → Neo4j (stub, for a real graph database later) | Start fast with zero external dependencies; swap the `Repository` implementation when you actually need Cypher queries |
+| Backend | FastAPI | Native async, easy WebSockets, automatic docs |
+| Frontend | React + Vite + Cytoscape.js | Graph layouts out of the box, saves weeks of development |
+| Security integration | NetGuardian (optional) | Reuses an existing anomaly-detection IDS instead of reimplementing one |
+| Containers | Docker + docker-compose | Reproducible homelab deployment |
 
 ---
 
-## 📁 Estructura del repositorio
-
-La estructura final creció un poco respecto al plan inicial: apareció
-`common/` para que discovery/analysis/backend compartan configuración
-y base de datos sin duplicar código (mismo patrón que en NetGuardian),
-y `data/oui_database.txt` no existe como archivo propio porque la
-librería `manuf` ya trae su propia base OUI empaquetada — mantener una
-copia local habría sido redundante.
+## 📁 Repository structure
 
 ```
 netmapper/
@@ -192,34 +202,36 @@ netmapper/
 ├── LICENSE
 ├── .gitignore / .dockerignore
 ├── docker-compose.yml
-├── .env.example                 # referencia de toda la configuración
+├── .env.example                 # reference for every available setting
 ├── requirements-dev.txt         # discovery + analysis + backend + pytest
 │
-├── common/                      # compartido por discovery, analysis y backend
-│   ├── config.py                  # settings desde .env (incluye ALLOWED_NETWORKS)
-│   ├── db.py                      # Repository (SQLite hoy, Neo4j como stub futuro)
-│   └── device_types.py            # motor de reglas de inferencia de tipo
+├── common/                      # shared by discovery, analysis and backend
+│   ├── config.py                  # settings from .env (ALLOWED_NETWORKS, ALLOWED_DEVICES...)
+│   ├── db.py                      # Repository (SQLite today, Neo4j as an explicit stub)
+│   ├── device_types.py            # device-type inference rule engine
+│   ├── severity.py                # shared none<low<medium<high ordering
+│   └── netguardian_client.py      # optional NetGuardian integration client
 │
 ├── discovery/
-│   ├── main.py                    # orquesta todo el pipeline (--continuous)
-│   ├── network_discovery.py       # Fase 0: netifaces + pyroute2 + SNMP
-│   ├── host_discovery.py          # Fase 1: ARP (local) + sondeo TCP (remoto)
-│   ├── device_fingerprint.py      # Fase 2: OUI + puertos + mDNS
-│   ├── passive_capture.py         # Fase 3: Scapy + ventanas + consultas DNS
-│   ├── fusion_engine.py           # Fase 4: el módulo más delicado
+│   ├── main.py                    # orchestrates the whole pipeline (--continuous)
+│   ├── network_discovery.py       # Stage 0: netifaces + pyroute2 + SNMP, IPv4+IPv6
+│   ├── host_discovery.py          # Stage 1: ARP/NDP (local) + TCP probing (remote)
+│   ├── device_fingerprint.py      # Stage 2: OUI + ports + mDNS
+│   ├── passive_capture.py         # Stage 3: Scapy + windows + DNS queries
+│   ├── fusion_engine.py           # Stage 4: the most delicate module
 │   ├── Dockerfile
 │   └── requirements.txt
 │
 ├── analysis/
-│   ├── graph_analysis.py          # Fase 5: comunidades, centralidad, capas
+│   ├── graph_analysis.py          # Stage 5: communities, centrality, layers
 │   └── requirements.txt
 │
 ├── backend/
-│   ├── main.py                    # FastAPI + WebSocket + difusión del grafo
+│   ├── main.py                    # FastAPI + WebSocket + graph broadcaster
 │   ├── ws_manager.py
 │   ├── routes/
 │   │   ├── networks.py
-│   │   ├── devices.py
+│   │   ├── devices.py               # includes /{mac}/history
 │   │   ├── graph.py
 │   │   └── ws.py
 │   ├── Dockerfile
@@ -229,9 +241,9 @@ netmapper/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── NetworkGraph.jsx     # Cytoscape.js
-│   │   │   ├── FilterPanel.jsx
+│   │   │   ├── FilterPanel.jsx      # filters, legend, device detail + history
 │   │   │   └── TimelapseControls.jsx
-│   │   ├── deviceTypes.js           # misma paleta que common/device_types.py
+│   │   ├── deviceTypes.js           # same palette as common/device_types.py
 │   │   ├── api.js
 │   │   ├── App.jsx
 │   │   └── main.jsx
@@ -239,56 +251,56 @@ netmapper/
 │   ├── package.json
 │   └── vite.config.js
 │
-├── data/                         # base SQLite (gitignored)
-├── tests/                        # pytest de discovery + analysis + backend + common
+├── data/                         # SQLite database (gitignored)
+├── tests/                        # pytest for discovery + analysis + backend + common
 └── docs/
-    └── capturas/                 # screenshots reales del panel
+    └── capturas/                 # real screenshots of the dashboard
 ```
 
 ---
 
-## 🗺️ Roadmap y plan de commits
+## 🗺️ Roadmap & commit plan
 
-### Fase 0 — Setup
+### Stage 0 — Setup
 - [x] `chore: inicializar repositorio con estructura de carpetas`
 - [x] `chore: .gitignore, README inicial y licencia`
 - [x] `chore: aviso legal de uso responsable en el README`
 
-### Fase 1 — Descubrimiento de redes
+### Stage 1 — Network discovery
 - [x] `feat: enumerar interfaces locales y calcular CIDR con netifaces`
 - [x] `feat: parseo de la tabla de rutas del sistema con pyroute2`
 - [x] `feat: consulta SNMP a routers/switches gestionables`
 - [x] `test: pruebas del módulo network_discovery`
 
-### Fase 2 — Descubrimiento de hosts
+### Stage 2 — Host discovery
 - [x] `feat: ARP scanning para redes directamente conectadas`
 - [x] `feat: escaneo asíncrono ICMP/TCP para redes remotas`
 - [x] `perf: paralelización del escaneo por subred`
 
-### Fase 3 — Caracterización de dispositivos
+### Stage 3 — Device characterization
 - [x] `feat: lookup de fabricante por MAC (OUI)`
 - [x] `feat: port scanning selectivo y detección de banners`
 - [x] `feat: escucha pasiva de mDNS/UPnP`
 - [x] `feat: motor de reglas para inferir tipo de dispositivo`
 
-### Fase 4 — Descubrimiento pasivo
+### Stage 4 — Passive discovery
 - [x] `feat: captura de tráfico y agregación por ventanas`
 - [x] `feat: extracción de relaciones origen-destino`
 - [x] `feat: análisis de consultas DNS por dispositivo`
 
-### Fase 5 — Fusión y análisis de grafo
+### Stage 5 — Fusion & graph analysis
 - [x] `feat: motor de fusión de datos multi-fuente`
 - [x] `feat: deduplicación y resolución de conflictos por MAC`
 - [x] `feat: detección de comunidades (Louvain)`
 - [x] `feat: cálculo de centralidad e inferencia de capas`
 - [x] `test: pruebas del motor de fusión y análisis de grafo`
 
-### Fase 6 — Persistencia y backend
+### Stage 6 — Persistence & backend
 - [x] `feat: capa de persistencia SQLite con interfaz abstracta (Neo4jRepository como stub)`
 - [x] `feat: endpoints REST (/networks, /devices, /graph)`
 - [x] `feat: WebSocket para actualizaciones en vivo`
 
-### Fase 7 — Frontend
+### Stage 7 — Frontend
 - [x] `feat: scaffold de React + Vite`
 - [x] `feat: renderizado del grafo con Cytoscape.js`
 - [x] `feat: filtros por subred y por capa jerárquica`
@@ -296,41 +308,50 @@ netmapper/
 - [x] `feat: exportación del mapa (imagen/diagrama)`
 - [x] `style: pulido visual del panel`
 
-### Fase 8 — Dockerización y cierre
+### Stage 8 — Dockerization & wrap-up
 - [x] `feat: Dockerfile por servicio + docker-compose.yml`
 - [x] `docs: capturas de pantalla y resultados`
 - [x] `chore: limpieza final y revisión de código`
 
+### Stage 9 — Built-in enhancements (originally listed as future improvements)
+- [x] `feat: soporte IPv6 en descubrimiento de redes/hosts/captura pasiva`
+- [x] `feat: detección de dispositivos no autorizados (ALLOWED_DEVICES)`
+- [x] `feat: huella histórica por dispositivo (device footprint)`
+- [x] `feat: integración con NetGuardian — superpone alertas de anomalías en el mapa`
+
+All stages are complete — the commit history in this repo follows this roadmap stage by stage, each with its own descriptive commit.
+
 ---
 
-## ⚙️ Guía de instalación
+## ⚙️ Installation guide
 
-### Requisitos previos
+### Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- Docker y docker-compose (opcional, pero recomendado para el homelab)
-- Permisos de administrador/root (necesarios para ARP scanning y captura de tráfico)
-- Acceso de gestión (SNMP/API) al router, opcional pero recomendado para mejor precisión
+- Docker and docker-compose (optional, but recommended for homelab deployment)
+- Administrator/root permissions (needed for ARP/NDP scanning and packet capture)
+- Management access (SNMP/API) to your router — optional, but improves accuracy
+- (Optional) A running [NetGuardian](https://github.com/gsan-dev/NetGuardian) instance, if you want anomaly alerts overlaid on the map
 
-### 1. Clonar el repositorio
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/gsan-dev/NetMapper.git
 cd NetMapper
 ```
 
-### 2. Entorno virtual y dependencias Python
+### 2. Python virtual environment and dependencies
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r discovery/requirements.txt
 pip install -r analysis/requirements.txt
 pip install -r backend/requirements.txt
 ```
 
-### 3. Dependencias del frontend
+### 3. Frontend dependencies
 
 ```bash
 cd frontend
@@ -338,67 +359,71 @@ npm install
 cd ..
 ```
 
-### 4. Variables de entorno
+### 4. Environment variables
 
-Copia la plantilla y ajústala a tu red:
+Copy the template and adjust it to your network:
 
 ```bash
 cp .env.example .env
 ```
 
-`.env.example` es la referencia siempre actualizada de toda la configuración disponible. Como mínimo revisa:
+`.env.example` is the always-up-to-date reference for every available setting. At minimum, review:
 
 ```env
 ALLOWED_NETWORKS=192.168.0.0/24,192.168.1.0/24,10.0.0.0/24,172.26.0.0/24
 SNMP_COMMUNITY=public
 SCAN_INTERVAL_SECONDS=300
-DB_BACKEND=sqlite   # ver nota sobre Neo4j más abajo
+DB_BACKEND=sqlite   # see the database note below
+
+# Optional built-in enhancements — both disabled by default
+ALLOWED_DEVICES=                # comma-separated known MACs; empty = nothing flagged
+NETGUARDIAN_ENABLED=false       # set true + fill NETGUARDIAN_* to overlay IDS alerts
 ```
 
-> `ALLOWED_NETWORKS` es intencional: aunque el programa detecte más redes automáticamente, solo escaneará activamente las que hayas autorizado explícitamente aquí. Es tu "lista blanca" de seguridad.
+> `ALLOWED_NETWORKS` is deliberate: even though the program will auto-detect more networks, it only ever actively scans the ones you've explicitly authorized here. It's your security whitelist — see [Legal & ethical considerations](#️-legal--ethical-considerations).
 
-> **Nota sobre la base de datos:** el plan original apuntaba a Neo4j desde el principio. En la implementación final se priorizó SQLite (`DB_BACKEND=sqlite`, por defecto) para no depender de un servidor de grafo externo solo para arrancar, siguiendo la misma filosofía "SQLite primero, motor especializado después" que NetGuardian. `common/db.py` ya define la interfaz `Repository` y un `Neo4jRepository` como stub explícito — implementarlo sobre esa misma interfaz no requiere tocar discovery, analysis ni backend. Si quieres Neo4j desde ya, esa es la pieza que falta por escribir.
+> **Database note:** the original plan pointed at Neo4j from the start. The final implementation prioritized SQLite (`DB_BACKEND=sqlite`, default) instead, to avoid depending on an external graph server just to get running — the same "SQLite first, specialized engine later" philosophy used in [NetGuardian](https://github.com/gsan-dev/NetGuardian). `common/db.py` already defines the `Repository` interface and an explicit `Neo4jRepository` stub — implementing that class against the same interface won't require touching discovery, analysis, or backend at all. If you want Neo4j today, that's the piece left to write.
 
-Genera el frontend/.env con la URL del backend (`cp frontend/.env.example frontend/.env`) si el backend no corre en `localhost:8100`.
+Generate `frontend/.env` with your backend URL (`cp frontend/.env.example frontend/.env`) if the backend isn't running on `localhost:8100`.
 
 ---
 
-## 🚀 Pasos a seguir para ejecutarlo
+## 🚀 Getting it running
 
-### Paso 1 — Ejecutar el descubrimiento de redes (una vez, para validar)
+### Step 1 — Run network discovery once, to validate
 
 ```bash
 cd discovery
 python3 network_discovery.py
 ```
 
-Esto imprime por consola la lista de subredes detectadas (locales, por tabla de rutas, y por router si está configurado SNMP) y si cada una está autorizada para escaneo activo según `ALLOWED_NETWORKS`. Revisa que coincide con lo que esperas antes de continuar.
+This prints the detected subnets (local, via routing table, and via router if SNMP is configured) and whether each one is authorized for active scanning per `ALLOWED_NETWORKS`. Check it matches what you expect before continuing.
 
-### Paso 2 — Lanzar el pipeline completo de escaneo
+### Step 2 — Launch the full scanning pipeline
 
 ```bash
 sudo python3 main.py --continuous
 ```
 
-Hace falta root para ARP scanning y captura pasiva. El flag `--continuous` deja el pipeline corriendo en bucle cada `SCAN_INTERVAL_SECONDS`, persistiendo cada pasada en `data/netmapper.db`. Sin el flag, hace una sola pasada completa (descubrimiento + análisis) y termina — útil para probar la configuración antes de dejarlo corriendo de verdad.
+Root is required for ARP/NDP scanning and passive capture. `--continuous` keeps the pipeline looping every `SCAN_INTERVAL_SECONDS`, persisting each pass to `data/netmapper.db`. Without the flag, it runs a single full pass (discovery + analysis) and exits — useful for validating your configuration before leaving it running for real.
 
-### Paso 3 — Levantar el backend
+### Step 3 — Start the backend
 
 ```bash
 cd backend
 uvicorn main:app --reload --port 8100
 ```
 
-### Paso 4 — Levantar el frontend
+### Step 4 — Start the frontend
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Accede al panel en `http://localhost:5174`.
+Open the dashboard at `http://localhost:5174`.
 
-### Paso 5 (alternativa recomendada) — Todo junto con Docker
+### Step 5 (recommended alternative) — Everything with Docker
 
 ```bash
 docker-compose up --build -d
@@ -407,33 +432,41 @@ docker-compose logs -f
 
 ---
 
-## 🖥️ Uso del panel
+## 🖥️ Using the dashboard
 
-- **Vista general**: todas las redes detectadas como pestañas/filtros, con su estado (escaneada / parcialmente accesible / solo conocida).
-- **Mapa interactivo**: nodos coloreados por tipo de dispositivo, aristas con grosor proporcional al volumen de tráfico observado.
-- **Panel lateral**: al hacer clic en un nodo, ves su metadata completa (IP, MAC, fabricante, puertos abiertos, servicios detectados).
-- **Time-lapse**: barra temporal para ver cómo ha cambiado la red en las últimas horas/días.
-- **Exportar**: botón para descargar el mapa actual como PNG, o como GraphML (draw.io lo importa de forma nativa: *File → Import from → Device*).
+- **Overview**: every detected network as a filter option, with its status (scanned / not scanned — outside `ALLOWED_NETWORKS`).
+- **Interactive map**: nodes colored by device type, edges weighted by observed traffic volume; unauthorized devices get a dashed red border, and devices with recent NetGuardian alerts get a severity-colored halo (amber/orange/red for low/medium/high).
+- **Side panel**: clicking a node shows its full metadata (IPs, MAC, vendor, open ports, authorization status), its NetGuardian alert summary when it has one, and its historical footprint — first-seen timestamp plus a collapsed list of actual device-type/vendor transitions over time.
+- **Time-lapse**: a slider over the stored analysis history that reconstructs the *exact* topology at any past point (not just current devices repainted with old metrics), with a toggle back to live mode.
+- **Export**: download the current map as a PNG, or as GraphML (draw.io imports this natively: *File → Import from → Device*).
 
 ---
 
-## 📸 Capturas
+## 📸 Screenshots
 
-Disposición force-directed (cose), con un router central y seis dispositivos alrededor, coloreados por tipo:
+Force-directed (cose) layout, a central router and six devices around it, colored by type:
 
-![Mapa force-directed](docs/capturas/force-directed.png)
+![Force-directed map](docs/capturas/force-directed.png)
 
-La misma topología en disposición jerárquica (breadthfirst), útil para ver de un vistazo qué cuelga directamente del gateway:
+The same topology in hierarchical (breadthfirst) layout, handy for seeing at a glance what hangs directly off the gateway:
 
-![Mapa jerárquico](docs/capturas/hierarchical.png)
+![Hierarchical map](docs/capturas/hierarchical.png)
 
-> Capturadas con el stack real corriendo (backend + frontend) contra datos de ejemplo sembrados directamente en la base de datos, verificando también que no hay errores de consola y que ambos modos de exportación (PNG/GraphML) descargan un archivo real.
+Both built-in enhancements visible at once: the IP camera has a dashed red border (not on the `ALLOWED_DEVICES` whitelist) and the mobile device carries a red halo (a high-severity NetGuardian alert against it):
+
+![Unauthorized device and security alert halo](docs/capturas/topology-features.png)
+
+Clicking that flagged device shows its full detail panel — authorization status, NetGuardian alert count/severity/reason, and first-seen timestamp:
+
+![Device detail panel with security and history info](docs/capturas/device-detail.png)
+
+> Captured against the real running stack (backend + frontend) with example data seeded directly into the database, verifying along the way that there are no console errors and that both export modes (PNG/GraphML) actually download a file.
 
 ---
 
 ## 🧪 Testing
 
-Todos los tests viven en `tests/` en la raíz (un único `conftest.py` añade `discovery/`, `analysis/`, `backend/` y la raíz del repo a `sys.path`):
+All tests live in `tests/` at the repo root (a single `conftest.py` adds `discovery/`, `analysis/`, `backend/` and the repo root to `sys.path`):
 
 ```bash
 python -m venv venv
@@ -444,19 +477,33 @@ cd tests
 pytest -q
 ```
 
-92 tests cubren descubrimiento de redes/hosts, fingerprinting de dispositivos, captura pasiva, el motor de fusión, el análisis de grafo, persistencia, la API del backend y la orquestación completa del pipeline — todos ejecutados y en verde en esta máquina (a diferencia de NetGuardian, aquí no hay ninguna dependencia con extensiones nativas bloqueadas por directivas de Windows).
+133 tests cover network/host discovery (IPv4 and IPv6), device fingerprinting, passive capture, the fusion engine, graph analysis, persistence, the backend API, the NetGuardian client, and the full pipeline orchestration — all executed and green on this machine (unlike NetGuardian, there's no dependency here on native extensions blocked by a Windows Application Control policy).
 
 ---
 
-## 🔮 Mejoras futuras
+## 🚀 Built-in enhancements
 
-- Integración con IDS tipo NetGuardian (tu proyecto anterior) para superponer alertas de anomalías directamente sobre el mapa.
-- Soporte IPv6.
-- Perfil de "huella histórica" por dispositivo (cuándo apareció por primera vez, cambios de comportamiento a lo largo del tiempo).
-- Detección automática de dispositivos "no autorizados" comparando contra una lista blanca definida por el usuario.
+The README's original "Future improvements" section listed four ideas. All four are implemented now, not left for later — each behind its own opt-in setting, defaulting to off/harmless so nothing changes for anyone who doesn't touch `.env`:
+
+- **NetGuardian integration** (`NETGUARDIAN_ENABLED`): `common/netguardian_client.py` polls a running [NetGuardian](https://github.com/gsan-dev/NetGuardian) IDS instance for anomaly alerts and correlates them by source IP with devices NetMapper already knows about — no anomaly-detection logic duplicated here. Flagged devices get a severity-colored halo on the map and a detail panel entry with alert count/severity/reason.
+- **IPv6 support**: local and routed IPv6 network discovery, NDP-based host discovery for directly-connected IPv6 segments (ARP doesn't exist in IPv6), and IPv6 packet parsing in passive capture. SNMP router discovery stays IPv4-only (documented limitation, not silently pretended away).
+- **Unauthorized device detection** (`ALLOWED_DEVICES`): an optional MAC whitelist. Devices not on it get flagged (`is_authorized: false`) and rendered with a dashed red border on the map — empty by default, so nobody gets false positives until they opt in.
+- **Device historical footprint**: `GET /api/devices/{mac}/history` reconstructs a device's timeline (first seen, device-type/vendor changes) directly from the graph snapshots already stored for time-lapse — no extra table needed.
 
 ---
 
-## 📄 Licencia
+## 🔮 Future improvements
 
-MIT — usa, modifica y comparte libremente citando la fuente. Recuerda: solo para redes propias o con autorización explícita.
+With the above now built, here's what's actually still open:
+
+- A real `Neo4jRepository` implementation, for genuine Cypher-based topology queries instead of SQLite JSON blobs.
+- IPv6 SNMP router discovery via RFC 4293's `ipAddressTable` (today's SNMP discovery is IPv4-only).
+- Alerting rules (webhook/Telegram/Discord) when an unauthorized device joins the network or a NetGuardian alert reaches "high" severity — right now both are visible on the map, but nothing pushes a notification.
+- Multi-user auth on the backend API (currently open — fine for a private homelab LAN, not for anything exposed further).
+- A dedicated diff view between two time-lapse snapshots (today you scrub between full topologies one at a time; a side-by-side "what changed" view would be more direct).
+
+---
+
+## 📄 License
+
+MIT — use, modify and share freely, crediting the source. Remember: only for networks you own or have explicit authorization to scan.
