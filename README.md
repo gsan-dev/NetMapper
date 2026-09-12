@@ -16,9 +16,10 @@
 8. [Guía de instalación](#-guía-de-instalación)
 9. [Pasos a seguir para ejecutarlo](#-pasos-a-seguir-para-ejecutarlo)
 10. [Uso del panel](#-uso-del-panel)
-11. [Testing](#-testing)
-12. [Mejoras futuras](#-mejoras-futuras)
-13. [Licencia](#-licencia)
+11. [Capturas](#-capturas)
+12. [Testing](#-testing)
+13. [Mejoras futuras](#-mejoras-futuras)
+14. [Licencia](#-licencia)
 
 ---
 
@@ -178,47 +179,70 @@ Renderiza el grafo con layouts automáticos (jerárquico o "force-directed"), pe
 
 ## 📁 Estructura del repositorio
 
+La estructura final creció un poco respecto al plan inicial: apareció
+`common/` para que discovery/analysis/backend compartan configuración
+y base de datos sin duplicar código (mismo patrón que en NetGuardian),
+y `data/oui_database.txt` no existe como archivo propio porque la
+librería `manuf` ya trae su propia base OUI empaquetada — mantener una
+copia local habría sido redundante.
+
 ```
 netmapper/
 ├── README.md
-├── .gitignore
+├── LICENSE
+├── .gitignore / .dockerignore
 ├── docker-compose.yml
+├── .env.example                 # referencia de toda la configuración
+├── requirements-dev.txt         # discovery + analysis + backend + pytest
+│
+├── common/                      # compartido por discovery, analysis y backend
+│   ├── config.py                  # settings desde .env (incluye ALLOWED_NETWORKS)
+│   ├── db.py                      # Repository (SQLite hoy, Neo4j como stub futuro)
+│   └── device_types.py            # motor de reglas de inferencia de tipo
+│
 ├── discovery/
-│   ├── network_discovery.py   # Fase 0
-│   ├── host_discovery.py      # Fase 1
-│   ├── device_fingerprint.py  # Fase 2
-│   ├── passive_capture.py     # Fase 3
-│   ├── fusion_engine.py       # Fase 4
+│   ├── main.py                    # orquesta todo el pipeline (--continuous)
+│   ├── network_discovery.py       # Fase 0: netifaces + pyroute2 + SNMP
+│   ├── host_discovery.py          # Fase 1: ARP (local) + sondeo TCP (remoto)
+│   ├── device_fingerprint.py      # Fase 2: OUI + puertos + mDNS
+│   ├── passive_capture.py         # Fase 3: Scapy + ventanas + consultas DNS
+│   ├── fusion_engine.py           # Fase 4: el módulo más delicado
+│   ├── Dockerfile
 │   └── requirements.txt
+│
 ├── analysis/
-│   ├── graph_analysis.py      # Fase 5
+│   ├── graph_analysis.py          # Fase 5: comunidades, centralidad, capas
 │   └── requirements.txt
+│
 ├── backend/
-│   ├── main.py
+│   ├── main.py                    # FastAPI + WebSocket + difusión del grafo
+│   ├── ws_manager.py
 │   ├── routes/
 │   │   ├── networks.py
 │   │   ├── devices.py
+│   │   ├── graph.py
 │   │   └── ws.py
-│   ├── db.py
+│   ├── Dockerfile
 │   └── requirements.txt
+│
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── NetworkGraph.jsx
+│   │   │   ├── NetworkGraph.jsx     # Cytoscape.js
 │   │   │   ├── FilterPanel.jsx
 │   │   │   └── TimelapseControls.jsx
+│   │   ├── deviceTypes.js           # misma paleta que common/device_types.py
+│   │   ├── api.js
 │   │   ├── App.jsx
 │   │   └── main.jsx
+│   ├── Dockerfile / nginx.conf
 │   ├── package.json
 │   └── vite.config.js
-├── data/
-│   └── oui_database.txt        # base de datos de fabricantes por MAC
-├── tests/
-│   ├── test_network_discovery.py
-│   ├── test_fusion_engine.py
-│   └── test_graph_analysis.py
+│
+├── data/                         # base SQLite (gitignored)
+├── tests/                        # pytest de discovery + analysis + backend + common
 └── docs/
-    └── capturas/
+    └── capturas/                 # screenshots reales del panel
 ```
 
 ---
@@ -226,56 +250,56 @@ netmapper/
 ## 🗺️ Roadmap y plan de commits
 
 ### Fase 0 — Setup
-- [ ] `chore: inicializar repositorio con estructura de carpetas`
-- [ ] `chore: .gitignore, README inicial y licencia`
-- [ ] `chore: aviso legal de uso responsable en el README`
+- [x] `chore: inicializar repositorio con estructura de carpetas`
+- [x] `chore: .gitignore, README inicial y licencia`
+- [x] `chore: aviso legal de uso responsable en el README`
 
 ### Fase 1 — Descubrimiento de redes
-- [ ] `feat: enumerar interfaces locales y calcular CIDR con netifaces`
-- [ ] `feat: parseo de la tabla de rutas del sistema con pyroute2`
-- [ ] `feat: consulta SNMP a routers/switches gestionables`
-- [ ] `test: pruebas del módulo network_discovery`
+- [x] `feat: enumerar interfaces locales y calcular CIDR con netifaces`
+- [x] `feat: parseo de la tabla de rutas del sistema con pyroute2`
+- [x] `feat: consulta SNMP a routers/switches gestionables`
+- [x] `test: pruebas del módulo network_discovery`
 
 ### Fase 2 — Descubrimiento de hosts
-- [ ] `feat: ARP scanning para redes directamente conectadas`
-- [ ] `feat: escaneo asíncrono ICMP/TCP para redes remotas`
-- [ ] `perf: paralelización del escaneo por subred`
+- [x] `feat: ARP scanning para redes directamente conectadas`
+- [x] `feat: escaneo asíncrono ICMP/TCP para redes remotas`
+- [x] `perf: paralelización del escaneo por subred`
 
 ### Fase 3 — Caracterización de dispositivos
-- [ ] `feat: lookup de fabricante por MAC (OUI)`
-- [ ] `feat: port scanning selectivo y detección de banners`
-- [ ] `feat: escucha pasiva de mDNS/UPnP`
-- [ ] `feat: motor de reglas para inferir tipo de dispositivo`
+- [x] `feat: lookup de fabricante por MAC (OUI)`
+- [x] `feat: port scanning selectivo y detección de banners`
+- [x] `feat: escucha pasiva de mDNS/UPnP`
+- [x] `feat: motor de reglas para inferir tipo de dispositivo`
 
 ### Fase 4 — Descubrimiento pasivo
-- [ ] `feat: captura de tráfico y agregación por ventanas`
-- [ ] `feat: extracción de relaciones origen-destino`
-- [ ] `feat: análisis de consultas DNS por dispositivo`
+- [x] `feat: captura de tráfico y agregación por ventanas`
+- [x] `feat: extracción de relaciones origen-destino`
+- [x] `feat: análisis de consultas DNS por dispositivo`
 
 ### Fase 5 — Fusión y análisis de grafo
-- [ ] `feat: motor de fusión de datos multi-fuente`
-- [ ] `feat: deduplicación y resolución de conflictos por MAC`
-- [ ] `feat: detección de comunidades (Louvain)`
-- [ ] `feat: cálculo de centralidad e inferencia de capas`
-- [ ] `test: pruebas del motor de fusión y análisis de grafo`
+- [x] `feat: motor de fusión de datos multi-fuente`
+- [x] `feat: deduplicación y resolución de conflictos por MAC`
+- [x] `feat: detección de comunidades (Louvain)`
+- [x] `feat: cálculo de centralidad e inferencia de capas`
+- [x] `test: pruebas del motor de fusión y análisis de grafo`
 
 ### Fase 6 — Persistencia y backend
-- [ ] `feat: modelo de grafo en Neo4j`
-- [ ] `feat: endpoints REST (/networks, /devices, /graph)`
-- [ ] `feat: WebSocket para actualizaciones en vivo`
+- [x] `feat: capa de persistencia SQLite con interfaz abstracta (Neo4jRepository como stub)`
+- [x] `feat: endpoints REST (/networks, /devices, /graph)`
+- [x] `feat: WebSocket para actualizaciones en vivo`
 
 ### Fase 7 — Frontend
-- [ ] `feat: scaffold de React + Vite`
-- [ ] `feat: renderizado del grafo con Cytoscape.js`
-- [ ] `feat: filtros por subred y por capa jerárquica`
-- [ ] `feat: modo time-lapse de evolución de topología`
-- [ ] `feat: exportación del mapa (imagen/diagrama)`
-- [ ] `style: pulido visual del panel`
+- [x] `feat: scaffold de React + Vite`
+- [x] `feat: renderizado del grafo con Cytoscape.js`
+- [x] `feat: filtros por subred y por capa jerárquica`
+- [x] `feat: modo time-lapse de evolución de topología`
+- [x] `feat: exportación del mapa (imagen/diagrama)`
+- [x] `style: pulido visual del panel`
 
 ### Fase 8 — Dockerización y cierre
-- [ ] `feat: Dockerfile por servicio + docker-compose.yml`
-- [ ] `docs: capturas de pantalla y resultados`
-- [ ] `chore: limpieza final y revisión de código`
+- [x] `feat: Dockerfile por servicio + docker-compose.yml`
+- [x] `docs: capturas de pantalla y resultados`
+- [x] `chore: limpieza final y revisión de código`
 
 ---
 
@@ -285,16 +309,15 @@ netmapper/
 
 - Python 3.11+
 - Node.js 18+
-- Docker y docker-compose
-- Neo4j (o usar la imagen oficial vía Docker)
+- Docker y docker-compose (opcional, pero recomendado para el homelab)
 - Permisos de administrador/root (necesarios para ARP scanning y captura de tráfico)
 - Acceso de gestión (SNMP/API) al router, opcional pero recomendado para mejor precisión
 
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/TU-USUARIO/netmapper.git
-cd netmapper
+git clone https://github.com/gsan-dev/NetMapper.git
+cd NetMapper
 ```
 
 ### 2. Entorno virtual y dependencias Python
@@ -317,66 +340,65 @@ cd ..
 
 ### 4. Variables de entorno
 
-Crea un archivo `.env` en la raíz:
+Copia la plantilla y ajústala a tu red:
+
+```bash
+cp .env.example .env
+```
+
+`.env.example` es la referencia siempre actualizada de toda la configuración disponible. Como mínimo revisa:
 
 ```env
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=tu_password
+ALLOWED_NETWORKS=192.168.0.0/24,192.168.1.0/24,10.0.0.0/24,172.26.0.0/24
 SNMP_COMMUNITY=public
 SCAN_INTERVAL_SECONDS=300
-ALLOWED_NETWORKS=192.168.0.0/24,192.168.1.0/24,10.0.0.0/24,172.26.0.0/24
+DB_BACKEND=sqlite   # ver nota sobre Neo4j más abajo
 ```
 
 > `ALLOWED_NETWORKS` es intencional: aunque el programa detecte más redes automáticamente, solo escaneará activamente las que hayas autorizado explícitamente aquí. Es tu "lista blanca" de seguridad.
+
+> **Nota sobre la base de datos:** el plan original apuntaba a Neo4j desde el principio. En la implementación final se priorizó SQLite (`DB_BACKEND=sqlite`, por defecto) para no depender de un servidor de grafo externo solo para arrancar, siguiendo la misma filosofía "SQLite primero, motor especializado después" que NetGuardian. `common/db.py` ya define la interfaz `Repository` y un `Neo4jRepository` como stub explícito — implementarlo sobre esa misma interfaz no requiere tocar discovery, analysis ni backend. Si quieres Neo4j desde ya, esa es la pieza que falta por escribir.
+
+Genera el frontend/.env con la URL del backend (`cp frontend/.env.example frontend/.env`) si el backend no corre en `localhost:8100`.
 
 ---
 
 ## 🚀 Pasos a seguir para ejecutarlo
 
-### Paso 1 — Levantar Neo4j
-
-```bash
-docker run -d --name netmapper-neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/tu_password \
-  neo4j:5
-```
-
-### Paso 2 — Ejecutar el motor de descubrimiento (una vez, para validar)
+### Paso 1 — Ejecutar el descubrimiento de redes (una vez, para validar)
 
 ```bash
 cd discovery
-sudo python3 network_discovery.py
+python3 network_discovery.py
 ```
 
-Esto debería imprimir por consola la lista de subredes detectadas (locales, por tabla de rutas, y por router si está configurado SNMP). Revisa que coincide con lo que esperas antes de continuar.
+Esto imprime por consola la lista de subredes detectadas (locales, por tabla de rutas, y por router si está configurado SNMP) y si cada una está autorizada para escaneo activo según `ALLOWED_NETWORKS`. Revisa que coincide con lo que esperas antes de continuar.
 
-### Paso 3 — Lanzar el pipeline completo de escaneo
+### Paso 2 — Lanzar el pipeline completo de escaneo
 
 ```bash
 sudo python3 main.py --continuous
 ```
 
-El flag `--continuous` deja el escaneo corriendo en bucle cada `SCAN_INTERVAL_SECONDS`, alimentando Neo4j con cada pasada.
+Hace falta root para ARP scanning y captura pasiva. El flag `--continuous` deja el pipeline corriendo en bucle cada `SCAN_INTERVAL_SECONDS`, persistiendo cada pasada en `data/netmapper.db`. Sin el flag, hace una sola pasada completa (descubrimiento + análisis) y termina — útil para probar la configuración antes de dejarlo corriendo de verdad.
 
-### Paso 4 — Levantar el backend
+### Paso 3 — Levantar el backend
 
 ```bash
 cd backend
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8100
 ```
 
-### Paso 5 — Levantar el frontend
+### Paso 4 — Levantar el frontend
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Accede al panel en `http://localhost:5173`.
+Accede al panel en `http://localhost:5174`.
 
-### Paso 6 (alternativa recomendada) — Todo junto con Docker
+### Paso 5 (alternativa recomendada) — Todo junto con Docker
 
 ```bash
 docker-compose up --build -d
@@ -391,17 +413,38 @@ docker-compose logs -f
 - **Mapa interactivo**: nodos coloreados por tipo de dispositivo, aristas con grosor proporcional al volumen de tráfico observado.
 - **Panel lateral**: al hacer clic en un nodo, ves su metadata completa (IP, MAC, fabricante, puertos abiertos, servicios detectados).
 - **Time-lapse**: barra temporal para ver cómo ha cambiado la red en las últimas horas/días.
-- **Exportar**: botón para descargar el mapa actual como PNG o como archivo compatible con draw.io.
+- **Exportar**: botón para descargar el mapa actual como PNG, o como GraphML (draw.io lo importa de forma nativa: *File → Import from → Device*).
+
+---
+
+## 📸 Capturas
+
+Disposición force-directed (cose), con un router central y seis dispositivos alrededor, coloreados por tipo:
+
+![Mapa force-directed](docs/capturas/force-directed.png)
+
+La misma topología en disposición jerárquica (breadthfirst), útil para ver de un vistazo qué cuelga directamente del gateway:
+
+![Mapa jerárquico](docs/capturas/hierarchical.png)
+
+> Capturadas con el stack real corriendo (backend + frontend) contra datos de ejemplo sembrados directamente en la base de datos, verificando también que no hay errores de consola y que ambos modos de exportación (PNG/GraphML) descargan un archivo real.
 
 ---
 
 ## 🧪 Testing
 
+Todos los tests viven en `tests/` en la raíz (un único `conftest.py` añade `discovery/`, `analysis/`, `backend/` y la raíz del repo a `sys.path`):
+
 ```bash
-cd discovery && pytest tests/
-cd ../analysis && pytest tests/
-cd ../backend && pytest tests/
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements-dev.txt
+
+cd tests
+pytest -q
 ```
+
+92 tests cubren descubrimiento de redes/hosts, fingerprinting de dispositivos, captura pasiva, el motor de fusión, el análisis de grafo, persistencia, la API del backend y la orquestación completa del pipeline — todos ejecutados y en verde en esta máquina (a diferencia de NetGuardian, aquí no hay ninguna dependencia con extensiones nativas bloqueadas por directivas de Windows).
 
 ---
 
