@@ -129,6 +129,90 @@ def test_fingerprint_host_skips_banner_grab_when_disabled():
     assert profile.service_banners == {}
 
 
+def test_parse_certificate_returns_expected_fields():
+    fake_cert = MagicMock()
+    fake_cert.subject.rfc4514_string.return_value = "CN=nas.local"
+    fake_cert.issuer.rfc4514_string.return_value = "CN=nas.local"
+    fake_cert.not_valid_after_utc = df.datetime(2099, 1, 1, tzinfo=df.timezone.utc)
+
+    with patch.object(df, "_CRYPTOGRAPHY_AVAILABLE", True), patch.object(
+        df, "x509", MagicMock(load_der_x509_certificate=MagicMock(return_value=fake_cert))
+    ):
+        result = df._parse_certificate(b"fake-der-bytes")
+
+    assert result["subject"] == "CN=nas.local"
+    assert result["issuer"] == "CN=nas.local"
+    assert result["expired"] is False
+    assert result["self_signed"] is True
+
+
+def test_parse_certificate_returns_none_without_cryptography():
+    with patch.object(df, "_CRYPTOGRAPHY_AVAILABLE", False):
+        assert df._parse_certificate(b"fake-der-bytes") is None
+
+
+@pytest.mark.asyncio
+async def test_inspect_tls_returns_none_on_connection_failure():
+    with patch.object(
+        df.asyncio, "open_connection", AsyncMock(side_effect=OSError())
+    ):
+        assert await df._inspect_tls("10.0.0.5", 443, timeout=1) is None
+
+
+@pytest.mark.asyncio
+async def test_inspect_tls_parses_peer_certificate():
+    mock_writer = MagicMock()
+    mock_ssl_object = MagicMock()
+    mock_ssl_object.getpeercert.return_value = b"fake-der-bytes"
+    mock_writer.get_extra_info.return_value = mock_ssl_object
+
+    with patch.object(
+        df.asyncio, "open_connection", AsyncMock(return_value=(MagicMock(), mock_writer))
+    ), patch.object(df, "_parse_certificate", return_value={"subject": "CN=nas.local"}):
+        result = await df._inspect_tls("10.0.0.5", 443, timeout=1)
+
+    assert result == {"subject": "CN=nas.local"}
+
+
+@pytest.mark.asyncio
+async def test_inspect_tls_certificates_async_returns_only_parsed():
+    async def fake_inspect(ip, port, timeout):
+        return {"subject": "CN=x"} if port == 443 else None
+
+    with patch.object(df, "_inspect_tls", fake_inspect):
+        result = await df.inspect_tls_certificates_async("10.0.0.5", {443, 8443})
+
+    assert result == {443: {"subject": "CN=x"}}
+
+
+def test_fingerprint_host_inspects_tls_when_port_open():
+    host = Host(ip="192.168.1.7", mac="00:11:32:aa:bb:cc", subnet_cidr="192.168.1.0/24", discovery_method="arp")
+
+    with patch.object(df, "lookup_vendor", return_value=None), patch.object(
+        df, "scan_ports", return_value={443}
+    ), patch.object(df, "grab_banners", return_value={}), patch.object(
+        df, "inspect_tls_certificates", return_value={443: {"subject": "CN=nas.local"}}
+    ) as mock_tls:
+        profile = df.fingerprint_host(host)
+
+    assert profile.tls_certificates == {443: {"subject": "CN=nas.local"}}
+    mock_tls.assert_called_once_with("192.168.1.7", {443}, timeout=2.0)
+
+
+def test_fingerprint_host_skips_tls_inspection_when_disabled():
+    host = Host(ip="192.168.1.7", mac="00:11:32:aa:bb:cc", subnet_cidr="192.168.1.0/24", discovery_method="arp")
+
+    with patch.object(df, "lookup_vendor", return_value=None), patch.object(
+        df, "scan_ports", return_value={443}
+    ), patch.object(df, "grab_banners", return_value={}), patch.object(
+        df, "inspect_tls_certificates"
+    ) as mock_tls:
+        profile = df.fingerprint_host(host, tls_inspect_enabled=False)
+
+    mock_tls.assert_not_called()
+    assert profile.tls_certificates == {}
+
+
 def test_fingerprint_host_uses_placeholder_mac_when_missing():
     host = Host(ip="10.0.0.9", mac=None, subnet_cidr="10.0.0.0/24", discovery_method="tcp_probe")
 

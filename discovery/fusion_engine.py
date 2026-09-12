@@ -42,6 +42,8 @@ class Device:
     # Mejora futura ya implementada: banner grabbing — versión de
     # servicio por puerto, base para la correlación con CVEs.
     service_banners: dict[int, str] = field(default_factory=dict)
+    # Mejora futura ya implementada: inspección de certificados TLS.
+    tls_certificates: dict[int, dict] = field(default_factory=dict)
     dns_queries: dict[str, int] = field(default_factory=dict)  # dominio -> nº consultas
     subnet_cidrs: set[str] = field(default_factory=set)
     first_seen: float = field(default_factory=time.time)
@@ -68,6 +70,7 @@ class Device:
             "open_ports": sorted(self.open_ports),
             "mdns_services": self.mdns_services,
             "service_banners": self.service_banners,
+            "tls_certificates": self.tls_certificates,
             "dns_queries": self.dns_queries,
             "subnet_cidrs": sorted(self.subnet_cidrs),
             "first_seen": self.first_seen,
@@ -152,6 +155,8 @@ class FusionEngine:
             )
         if profile.service_banners:
             device.service_banners.update(profile.service_banners)
+        if profile.tls_certificates:
+            device.tls_certificates.update(profile.tls_certificates)
         return device
 
     def _resolve_mac(self, ip: str) -> str:

@@ -7,6 +7,9 @@ Para cada host vivo:
 - **Banner grabbing** (mejora futura ya implementada): lee la
   versión de servicio de cada puerto abierto — base para la
   correlación con CVEs.
+- **Inspección de certificados TLS** (mejora futura ya implementada):
+  handshake TLS sin verificar la cadena de confianza para leer
+  sujeto/emisor/caducidad de cada puerto TLS abierto.
 - **Tipo de dispositivo**: motor de reglas (`common.device_types`) que
   combina fabricante + puertos abiertos.
 - **mDNS/UPnP**: escucha pasiva de anuncios que muchos dispositivos
@@ -17,13 +20,23 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import ssl
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from common.device_types import infer_device_type
 from host_discovery import Host
 
 logger = logging.getLogger("netmapper.device_fingerprint")
+
+try:
+    from cryptography import x509
+
+    _CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    x509 = None
+    _CRYPTOGRAPHY_AVAILABLE = False
 
 try:
     from manuf import manuf
@@ -52,6 +65,10 @@ COMMON_PORTS = (22, 23, 53, 80, 139, 161, 443, 445, 554, 631, 3306, 3389, 5432, 
 # enviar su saludo nada más conectar, sin que el cliente diga nada.
 HTTP_BANNER_PORTS = (80, 8000, 8080)
 
+# Puertos donde probar un handshake TLS para inspeccionar el certificado
+# (mejora futura ya implementada) — deliberadamente no exhaustivo.
+TLS_PORTS = (443, 8443, 993, 995)
+
 # Tipos de servicio mDNS más habituales en un homelab/red doméstica.
 DEFAULT_MDNS_SERVICE_TYPES = (
     "_http._tcp.local.",
@@ -76,6 +93,11 @@ class DeviceProfile:
     # servicio por puerto (p. ej. {22: "SSH-2.0-OpenSSH_8.9p1"}), base
     # para la correlación con CVEs.
     service_banners: dict[int, str] = field(default_factory=dict)
+    # Mejora futura ya implementada: inspección de certificados TLS —
+    # sujeto/emisor/caducidad por puerto TLS abierto, sin verificar la
+    # cadena de confianza (muchos dispositivos domésticos usan
+    # certificados autofirmados; el objetivo es informar, no validar).
+    tls_certificates: dict[int, dict] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -86,6 +108,7 @@ class DeviceProfile:
             "device_type": self.device_type,
             "mdns_services": self.mdns_services,
             "service_banners": self.service_banners,
+            "tls_certificates": self.tls_certificates,
         }
 
 
@@ -194,6 +217,82 @@ def grab_banners(ip: str, ports: set[int], **kwargs) -> dict[int, str]:
     return asyncio.run(grab_banners_async(ip, ports, **kwargs))
 
 
+def _build_insecure_tls_context() -> ssl.SSLContext:
+    """Contexto TLS que no valida la cadena de confianza.
+
+    El objetivo es *informar* sobre el certificado que presenta el
+    dispositivo (para detectar caducidad o autofirmado), no decidir si
+    confiar en él — muchos dispositivos domésticos (routers, cámaras,
+    NAS) usan certificados autofirmados que rechazaría una verificación
+    estricta.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def _parse_certificate(der_bytes: bytes) -> dict | None:
+    if not _CRYPTOGRAPHY_AVAILABLE:
+        return None
+    try:
+        cert = x509.load_der_x509_certificate(der_bytes)
+        subject = cert.subject.rfc4514_string()
+        issuer = cert.issuer.rfc4514_string()
+        not_after = cert.not_valid_after_utc
+        return {
+            "subject": subject,
+            "issuer": issuer,
+            "not_after": not_after.isoformat(),
+            "expired": not_after < datetime.now(timezone.utc),
+            "self_signed": subject == issuer,
+        }
+    except Exception:
+        logger.exception("Error parseando certificado TLS")
+        return None
+
+
+async def _inspect_tls(ip: str, port: int, timeout: float) -> dict | None:
+    context = _build_insecure_tls_context()
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port, ssl=context), timeout=timeout
+        )
+    except (TimeoutError, OSError, ssl.SSLError):
+        return None
+
+    try:
+        ssl_object = writer.get_extra_info("ssl_object")
+        if ssl_object is None:
+            return None
+        der_bytes = ssl_object.getpeercert(binary_form=True)
+        if not der_bytes:
+            return None
+        return _parse_certificate(der_bytes)
+    finally:
+        writer.close()
+
+
+async def inspect_tls_certificates_async(
+    ip: str, ports: set[int], timeout: float = 2.0, concurrency: int = 10
+) -> dict[int, dict]:
+    """Inspecciona el certificado TLS de los puertos ya confirmados como abiertos."""
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def check(port: int) -> tuple[int, dict] | None:
+        async with semaphore:
+            cert = await _inspect_tls(ip, port, timeout)
+        return (port, cert) if cert else None
+
+    results = await asyncio.gather(*(check(p) for p in ports))
+    return dict(r for r in results if r is not None)
+
+
+def inspect_tls_certificates(ip: str, ports: set[int], **kwargs) -> dict[int, dict]:
+    """Versión síncrona de `inspect_tls_certificates_async`."""
+    return asyncio.run(inspect_tls_certificates_async(ip, ports, **kwargs))
+
+
 class _MdnsCollector(ServiceListener):
     """Recoge anuncios mDNS por dirección IP durante una ventana de escucha."""
 
@@ -252,6 +351,8 @@ def fingerprint_host(
     port_scan_concurrency: int = 50,
     banner_grab_enabled: bool = True,
     banner_grab_timeout: float = 1.5,
+    tls_inspect_enabled: bool = True,
+    tls_inspect_timeout: float = 2.0,
 ) -> DeviceProfile:
     """Combina vendor + puertos abiertos + mDNS + banners en un DeviceProfile.
 
@@ -272,6 +373,11 @@ def fingerprint_host(
     if banner_grab_enabled and open_ports:
         service_banners = grab_banners(host.ip, open_ports, timeout=banner_grab_timeout)
 
+    tls_certificates: dict[int, dict] = {}
+    tls_ports = open_ports & set(TLS_PORTS)
+    if tls_inspect_enabled and tls_ports:
+        tls_certificates = inspect_tls_certificates(host.ip, tls_ports, timeout=tls_inspect_timeout)
+
     return DeviceProfile(
         mac=host.mac or f"unknown-{host.ip}",
         ip=host.ip,
@@ -280,4 +386,5 @@ def fingerprint_host(
         device_type=device_type,
         mdns_services=mdns_services,
         service_banners=service_banners,
+        tls_certificates=tls_certificates,
     )

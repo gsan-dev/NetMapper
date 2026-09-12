@@ -129,6 +129,8 @@ class Pipeline:
                     port_scan_concurrency=settings.port_scan_concurrency,
                     banner_grab_enabled=settings.banner_grab_enabled,
                     banner_grab_timeout=settings.banner_grab_timeout_seconds,
+                    tls_inspect_enabled=settings.tls_inspect_enabled,
+                    tls_inspect_timeout=settings.tls_inspect_timeout_seconds,
                 )
                 self.engine.ingest_fingerprint(profile)
 
