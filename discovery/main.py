@@ -44,6 +44,7 @@ from graph_analysis import analyze
 from host_discovery import discover_hosts
 from network_discovery import discover_networks
 from passive_capture import PassiveCapture
+from traceroute import run_traceroute
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -221,6 +222,25 @@ class Pipeline:
             if findings_by_port:
                 self.engine.set_cve_findings(mac, findings_by_port)
 
+    def run_traceroute_pass(self) -> None:
+        """Mejora futura ya implementada: traceroute bajo demanda.
+
+        El backend solo encola la petición (sin privilegios de socket
+        crudo); aquí, en el pipeline de discovery, se resuelve de verdad.
+        """
+        pending = self.repo.list_pending_traceroute_requests()
+        for request in pending:
+            try:
+                hops = run_traceroute(
+                    request["target_ip"],
+                    max_hops=settings.traceroute_max_hops,
+                    timeout=settings.traceroute_timeout_seconds,
+                )
+                self.repo.complete_traceroute_request(request["id"], hops)
+            except Exception as exc:
+                logger.exception("Error ejecutando traceroute hacia %s", request["target_ip"])
+                self.repo.fail_traceroute_request(request["id"], str(exc))
+
     def persist_current_state(self) -> None:
         """Fase 6: escribe el estado acumulado del FusionEngine en la BD."""
         devices, relations = self.engine.snapshot()
@@ -259,6 +279,7 @@ class Pipeline:
         self.run_discovery_pass()
         self.poll_netguardian_alerts()
         self.run_cve_lookup_pass()
+        self.run_traceroute_pass()
         self.persist_current_state()
         self.run_analysis_pass()
 
@@ -281,6 +302,7 @@ class Pipeline:
                     last_cve_lookup = now
 
                 self._apply_lldp_neighbors()
+                self.run_traceroute_pass()
 
                 self.persist_current_state()
 

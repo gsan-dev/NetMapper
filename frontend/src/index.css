@@ -178,6 +178,57 @@ button.active {
   letter-spacing: 0.03em;
 }
 
+.device-traceroute {
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.device-traceroute button {
+  width: 100%;
+  font-size: 0.8rem;
+}
+
+.traceroute-hops {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.traceroute-hops li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.hop-ttl {
+  color: var(--text-dim);
+  min-width: 1.4em;
+  text-align: right;
+}
+
+.hop-ip {
+  flex: 1;
+  word-break: break-word;
+}
+
+.hop-rtt {
+  color: var(--text-dim);
+}
+
+.traceroute-error {
+  margin: 0.5rem 0 0;
+  color: #ef4444;
+  font-size: 0.78rem;
+}
+
 .topbar-actions {
   display: flex;
   gap: 0.5rem;

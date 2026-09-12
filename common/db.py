@@ -99,6 +99,22 @@ CREATE TABLE IF NOT EXISTS cve_cache (
     cves TEXT NOT NULL DEFAULT '[]',
     checked_at REAL NOT NULL
 );
+
+-- Mejora futura: traceroute bajo demanda. El backend (sin privilegios
+-- de socket crudo) solo encola la petición; el pipeline de discovery
+-- (que sí corre con ellos) la resuelve en su siguiente pasada.
+CREATE TABLE IF NOT EXISTS traceroute_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mac TEXT NOT NULL,
+    target_ip TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    hops TEXT NOT NULL DEFAULT '[]',
+    error TEXT,
+    requested_at REAL NOT NULL,
+    completed_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_traceroute_requests_mac ON traceroute_requests(mac);
+CREATE INDEX IF NOT EXISTS idx_traceroute_requests_status ON traceroute_requests(status);
 """
 
 
@@ -180,6 +196,21 @@ class Repository(ABC):
 
     @abstractmethod
     def upsert_cve_cache(self, cache_key: str, cves: list[dict[str, Any]], checked_at: float) -> None: ...
+
+    @abstractmethod
+    def create_traceroute_request(self, mac: str, target_ip: str) -> int: ...
+
+    @abstractmethod
+    def list_pending_traceroute_requests(self) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def complete_traceroute_request(self, request_id: int, hops: list[dict[str, Any]]) -> None: ...
+
+    @abstractmethod
+    def fail_traceroute_request(self, request_id: int, error: str) -> None: ...
+
+    @abstractmethod
+    def get_latest_traceroute_for_mac(self, mac: str) -> dict[str, Any] | None: ...
 
 
 class SQLiteRepository(Repository):
@@ -506,6 +537,63 @@ class SQLiteRepository(Repository):
                 (cache_key, json.dumps(cves), checked_at),
             )
 
+    # --- Traceroute bajo demanda ---
+
+    def create_traceroute_request(self, mac: str, target_ip: str) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO traceroute_requests (mac, target_ip, status, requested_at)
+                VALUES (?, ?, 'pending', ?)
+                """,
+                (mac, target_ip, time.time()),
+            )
+            return cursor.lastrowid
+
+    def list_pending_traceroute_requests(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM traceroute_requests WHERE status = 'pending' ORDER BY requested_at"
+            ).fetchall()
+            return [_row_to_dict(r) for r in rows]
+
+    def complete_traceroute_request(self, request_id: int, hops: list[dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE traceroute_requests
+                SET status = 'done', hops = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(hops), time.time(), request_id),
+            )
+
+    def fail_traceroute_request(self, request_id: int, error: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE traceroute_requests
+                SET status = 'error', error = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (error, time.time(), request_id),
+            )
+
+    def get_latest_traceroute_for_mac(self, mac: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM traceroute_requests
+                WHERE mac = ? ORDER BY requested_at DESC LIMIT 1
+                """,
+                (mac,),
+            ).fetchone()
+            if row is None:
+                return None
+            result = _row_to_dict(row)
+            result["hops"] = json.loads(result["hops"])
+            return result
+
 
 class Neo4jRepository(Repository):
     """Stub para la mejora futura: migrar a Neo4j para un modelo de grafo real.
@@ -584,6 +672,21 @@ class Neo4jRepository(Repository):
         self._not_implemented()
 
     def upsert_cve_cache(self, cache_key: str, cves: list[dict[str, Any]], checked_at: float) -> None:
+        self._not_implemented()
+
+    def create_traceroute_request(self, mac: str, target_ip: str) -> int:
+        self._not_implemented()
+
+    def list_pending_traceroute_requests(self) -> list[dict[str, Any]]:
+        self._not_implemented()
+
+    def complete_traceroute_request(self, request_id: int, hops: list[dict[str, Any]]) -> None:
+        self._not_implemented()
+
+    def fail_traceroute_request(self, request_id: int, error: str) -> None:
+        self._not_implemented()
+
+    def get_latest_traceroute_for_mac(self, mac: str) -> dict[str, Any] | None:
         self._not_implemented()
 
 

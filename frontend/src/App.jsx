@@ -8,7 +8,11 @@ import {
   fetchGraph,
   fetchNetworks,
   fetchSnapshots,
+  fetchTraceroute,
+  requestTraceroute,
 } from "./api";
+
+const TRACEROUTE_POLL_MS = 1500;
 
 const MAX_SNAPSHOTS = 200;
 
@@ -32,6 +36,8 @@ export default function App() {
   const [groupBySubnet, setGroupBySubnet] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [deviceHistory, setDeviceHistory] = useState([]);
+  const [traceroute, setTraceroute] = useState(null);
+  const [tracerouteLoading, setTracerouteLoading] = useState(false);
   const [wsStatus, setWsStatus] = useState("desconectado");
   const wsRef = useRef(null);
   const graphRef = useRef(null);
@@ -128,6 +134,37 @@ export default function App() {
     };
   }, [selectedDevice]);
 
+  useEffect(() => {
+    // Cambiar de dispositivo seleccionado descarta el traceroute anterior:
+    // mostrar el resultado de otro dispositivo confundiría al usuario.
+    setTraceroute(null);
+    setTracerouteLoading(false);
+  }, [selectedDevice]);
+
+  const handleRequestTraceroute = useCallback(async () => {
+    if (!selectedDevice) return;
+    const mac = selectedDevice.id;
+    setTracerouteLoading(true);
+    setTraceroute(null);
+    try {
+      await requestTraceroute(mac);
+      // Sondeo hasta que el pipeline de discovery resuelva la petición
+      // (o hasta un tope de intentos, por si el pipeline no está corriendo).
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, TRACEROUTE_POLL_MS));
+        const result = await fetchTraceroute(mac);
+        if (result.status !== "pending") {
+          setTraceroute(result);
+          break;
+        }
+      }
+    } catch (err) {
+      console.error("Error solicitando traceroute", err);
+    } finally {
+      setTracerouteLoading(false);
+    }
+  }, [selectedDevice]);
+
   function downloadDataUrl(dataUrl, filename) {
     const a = document.createElement("a");
     a.href = dataUrl;
@@ -189,6 +226,9 @@ export default function App() {
           onGroupBySubnetChange={setGroupBySubnet}
           selectedDevice={selectedDevice}
           deviceHistory={deviceHistory}
+          traceroute={traceroute}
+          tracerouteLoading={tracerouteLoading}
+          onRequestTraceroute={handleRequestTraceroute}
         />
 
         <section className="panel graph-panel">

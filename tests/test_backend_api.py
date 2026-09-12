@@ -199,6 +199,60 @@ def test_graph_snapshots_endpoint(client):
     assert len(response.json()) == 1
 
 
+def test_request_traceroute_returns_404_for_unknown_device(client):
+    response = client.post("/api/devices/zz:zz:zz:zz:zz:zz/traceroute")
+    assert response.status_code == 404
+
+
+def test_request_traceroute_returns_400_without_known_ip(client):
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.upsert_device({"mac": "aa:bb:cc:dd:ee:01", "ips": []})
+
+    response = client.post("/api/devices/aa:bb:cc:dd:ee:01/traceroute")
+    assert response.status_code == 400
+
+
+def test_request_traceroute_enqueues_pending_request(client):
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.upsert_device({"mac": "aa:bb:cc:dd:ee:01", "ips": ["192.168.1.10"]})
+
+    response = client.post("/api/devices/aa:bb:cc:dd:ee:01/traceroute")
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["target_ip"] == "192.168.1.10"
+
+    pending = repo.list_pending_traceroute_requests()
+    assert len(pending) == 1
+    assert pending[0]["mac"] == "aa:bb:cc:dd:ee:01"
+
+
+def test_get_traceroute_returns_404_without_prior_request(client):
+    response = client.get("/api/devices/aa:bb:cc:dd:ee:01/traceroute")
+    assert response.status_code == 404
+
+
+def test_get_traceroute_returns_latest_result(client):
+    from common.db import get_repository
+
+    repo = get_repository()
+    repo.upsert_device({"mac": "aa:bb:cc:dd:ee:01", "ips": ["192.168.1.10"]})
+    request_id = repo.create_traceroute_request("aa:bb:cc:dd:ee:01", "192.168.1.10")
+    repo.complete_traceroute_request(
+        request_id, [{"ttl": 1, "ip": "192.168.1.1", "rtt_ms": 1.2}]
+    )
+
+    response = client.get("/api/devices/aa:bb:cc:dd:ee:01/traceroute")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["hops"] == [{"ttl": 1, "ip": "192.168.1.1", "rtt_ms": 1.2}]
+
+
 def test_websocket_receives_graph_update(client):
     with client.websocket_connect("/ws") as ws:
         message = ws.receive_json()

@@ -275,6 +275,39 @@ def test_apply_lldp_neighbors_ingests_from_passive_capture(pipeline):
     assert device.physical_neighbor["system_name"] == "switch01"
 
 
+def test_run_traceroute_pass_completes_pending_request(pipeline, pipeline_module):
+    request_id = pipeline.repo.create_traceroute_request("aa:bb:cc:dd:ee:01", "8.8.8.8")
+    hops = [{"ttl": 1, "ip": "192.168.1.1", "rtt_ms": 1.2}]
+
+    with patch.object(pipeline_module, "run_traceroute", return_value=hops) as mock_traceroute:
+        pipeline.run_traceroute_pass()
+
+    mock_traceroute.assert_called_once()
+    assert mock_traceroute.call_args.args[0] == "8.8.8.8"
+    result = pipeline.repo.get_latest_traceroute_for_mac("aa:bb:cc:dd:ee:01")
+    assert result["status"] == "done"
+    assert result["hops"] == hops
+    assert pipeline.repo.list_pending_traceroute_requests() == []
+
+
+def test_run_traceroute_pass_marks_request_as_error_on_failure(pipeline, pipeline_module):
+    pipeline.repo.create_traceroute_request("aa:bb:cc:dd:ee:01", "8.8.8.8")
+
+    with patch.object(pipeline_module, "run_traceroute", side_effect=RuntimeError("no scapy")):
+        pipeline.run_traceroute_pass()
+
+    result = pipeline.repo.get_latest_traceroute_for_mac("aa:bb:cc:dd:ee:01")
+    assert result["status"] == "error"
+    assert result["error"] == "no scapy"
+
+
+def test_run_traceroute_pass_noop_without_pending_requests(pipeline, pipeline_module):
+    with patch.object(pipeline_module, "run_traceroute") as mock_traceroute:
+        pipeline.run_traceroute_pass()
+
+    mock_traceroute.assert_not_called()
+
+
 def test_pipeline_does_not_create_netguardian_client_when_disabled(pipeline):
     assert pipeline._netguardian_client is None
 

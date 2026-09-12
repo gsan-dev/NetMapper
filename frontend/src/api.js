@@ -12,6 +12,14 @@ async function getJson(path) {
   return response.json();
 }
 
+async function postJson(path) {
+  const response = await fetch(`${API_BASE_URL}${path}`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Error ${response.status} llamando a ${path}`);
+  }
+  return response.json();
+}
+
 export function fetchNetworks() {
   return getJson("/api/networks");
 }
@@ -30,6 +38,14 @@ export function fetchSnapshots(limit = 100) {
 
 export function fetchDeviceHistory(mac, limit = 200) {
   return getJson(`/api/devices/${encodeURIComponent(mac)}/history?limit=${limit}`);
+}
+
+export function requestTraceroute(mac) {
+  return postJson(`/api/devices/${encodeURIComponent(mac)}/traceroute`);
+}
+
+export function fetchTraceroute(mac) {
+  return getJson(`/api/devices/${encodeURIComponent(mac)}/traceroute`);
 }
 
 export function connectWebSocket({ onMessage, onOpen, onClose }) {

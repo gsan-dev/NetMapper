@@ -37,6 +37,9 @@ export default function FilterPanel({
   onGroupBySubnetChange,
   selectedDevice,
   deviceHistory = [],
+  traceroute = null,
+  tracerouteLoading = false,
+  onRequestTraceroute,
 }) {
   const transitions = deviceTypeTransitions(deviceHistory);
   const firstSeen = deviceHistory[0]?.created_at;
@@ -174,6 +177,28 @@ export default function FilterPanel({
               )}
             </div>
           )}
+
+          <div className="device-traceroute">
+            <button onClick={onRequestTraceroute} disabled={tracerouteLoading}>
+              {tracerouteLoading ? "Trazando ruta..." : "Traceroute"}
+            </button>
+            {traceroute && traceroute.status === "done" && (
+              <ol className="traceroute-hops">
+                {traceroute.hops.map((hop) => (
+                  <li key={hop.ttl}>
+                    <span className="hop-ttl">{hop.ttl}</span>
+                    <span className="hop-ip">{hop.ip || "* (sin respuesta)"}</span>
+                    {hop.rtt_ms != null && (
+                      <span className="hop-rtt">{hop.rtt_ms.toFixed(1)} ms</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {traceroute && traceroute.status === "error" && (
+              <p className="traceroute-error">Error: {traceroute.error}</p>
+            )}
+          </div>
         </div>
       )}
     </section>
