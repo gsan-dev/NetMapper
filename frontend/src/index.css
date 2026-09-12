@@ -7,9 +7,32 @@
   --text-dim: #94a3b8;
   --accent: #38bdf8;
   --ok: #4ade80;
+  --graph-bg: #0f172a;
+  --graph-node-border: #0f172a;
+  --graph-label: #cbd5e1;
+  --graph-edge: #334155;
 
   color-scheme: dark;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* Tema claro, activado por el toggle del topbar (guarda la preferencia
+   en localStorage) — por defecto la app arranca en oscuro. */
+:root[data-theme="light"] {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-alt: #f1f5f9;
+  --border: #cbd5e1;
+  --text: #0f172a;
+  --text-dim: #64748b;
+  --accent: #0284c7;
+  --ok: #16a34a;
+  --graph-bg: #eef2f7;
+  --graph-node-border: #ffffff;
+  --graph-label: #334155;
+  --graph-edge: #94a3b8;
+
+  color-scheme: light;
 }
 
 * {
@@ -213,7 +236,7 @@ button.active {
   flex: 1;
   min-height: 480px;
   border-radius: 10px;
-  background: var(--surface-alt);
+  background: var(--graph-bg);
 }
 
 .graph-empty {
@@ -237,13 +260,24 @@ button.active {
   margin-bottom: 1.1rem;
 }
 
-.filter-panel select {
+.filter-panel select,
+.filter-panel input[type="text"] {
   background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.5rem 0.6rem;
   color: var(--text);
   font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.filter-panel input[type="text"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.filter-panel input[type="text"]::placeholder {
+  color: var(--text-dim);
 }
 
 .button-group {

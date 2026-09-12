@@ -20,6 +20,14 @@ export default function App() {
   const [selectedSnapshotIndex, setSelectedSnapshotIndex] = useState(0);
   const [live, setLive] = useState(true);
   const [subnetFilter, setSubnetFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem("netmapper_theme") || "dark";
+    } catch {
+      return "dark";
+    }
+  });
   const [layoutName, setLayoutName] = useState("force");
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [deviceHistory, setDeviceHistory] = useState([]);
@@ -67,14 +75,41 @@ export default function App() {
   }, [live, liveDevices, liveRelations, snapshots, selectedSnapshotIndex]);
 
   const filteredDevices = useMemo(() => {
-    if (!subnetFilter) return devices;
-    return devices.filter((d) => (d.subnet_cidrs || []).includes(subnetFilter));
-  }, [devices, subnetFilter]);
+    let result = devices;
+    if (subnetFilter) {
+      result = result.filter((d) => (d.subnet_cidrs || []).includes(subnetFilter));
+    }
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      result = result.filter((d) => {
+        const haystack = [
+          d.mac,
+          d.vendor,
+          d.device_type,
+          ...(d.ips || []),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+    return result;
+  }, [devices, subnetFilter, searchQuery]);
 
   const unauthorizedCount = useMemo(
     () => filteredDevices.filter((d) => d.is_authorized === false).length,
     [filteredDevices]
   );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("netmapper_theme", theme);
+    } catch {
+      // localStorage puede no estar disponible (modo privado); no es crítico
+    }
+  }, [theme]);
 
   useEffect(() => {
     if (!selectedDevice) {
@@ -130,6 +165,9 @@ export default function App() {
           )}
         </div>
         <div className="topbar-actions">
+          <button onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
+            {theme === "dark" ? "☀ Claro" : "🌙 Oscuro"}
+          </button>
           <button onClick={handleExportPng}>Exportar PNG</button>
           <button onClick={handleExportGraphml} title="Importable en draw.io: File > Import from > Device">
             Exportar GraphML
@@ -142,6 +180,8 @@ export default function App() {
           networks={networks}
           subnetFilter={subnetFilter}
           onSubnetChange={setSubnetFilter}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
           layoutName={layoutName}
           onLayoutChange={setLayoutName}
           selectedDevice={selectedDevice}
@@ -154,12 +194,18 @@ export default function App() {
             devices={filteredDevices}
             relations={relations}
             layoutName={layoutName}
+            theme={theme}
             onSelectDevice={setSelectedDevice}
           />
-          {filteredDevices.length === 0 && (
+          {filteredDevices.length === 0 && devices.length === 0 && (
             <p className="empty graph-empty">
               Sin dispositivos todavía. Arranca el pipeline (`python3 main.py --continuous`
               dentro de discovery/) para empezar a ver tu red.
+            </p>
+          )}
+          {filteredDevices.length === 0 && devices.length > 0 && (
+            <p className="empty graph-empty">
+              Ningún dispositivo coincide con el filtro/búsqueda actual.
             </p>
           )}
         </section>

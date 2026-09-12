@@ -9,6 +9,12 @@ const SEVERITY_HALO_COLOR = {
   high: "#ef4444",
 };
 
+function cssVar(name, fallback) {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 function escapeXml(value) {
   return String(value ?? "").replace(/[<>&'"]/g, (c) => ({
     "<": "&lt;",
@@ -54,57 +60,72 @@ function buildElements(devices, relations) {
   return [...nodes, ...edges];
 }
 
-const STYLE = [
-  {
-    selector: "node",
-    style: {
-      "background-color": (ele) => colorForType(ele.data("deviceType")),
-      label: "data(label)",
-      "font-size": 9,
-      color: "#cbd5e1",
-      "text-valign": "bottom",
-      "text-margin-y": 6,
-      "text-outline-width": 0,
-      width: 28,
-      height: 28,
-      "border-width": (ele) => (ele.data("isAuthorized") === false ? 3 : 2),
-      "border-color": (ele) => (ele.data("isAuthorized") === false ? "#ef4444" : "#0f172a"),
-      "border-style": (ele) => (ele.data("isAuthorized") === false ? "dashed" : "solid"),
-      // Halo de alerta de seguridad (integración con NetGuardian): un
-      // anillo de color alrededor del nodo, sin ocultar su color de tipo.
-      "overlay-color": (ele) => SEVERITY_HALO_COLOR[ele.data("securityMaxSeverity")] || "transparent",
-      "overlay-opacity": (ele) => (SEVERITY_HALO_COLOR[ele.data("securityMaxSeverity")] ? 0.4 : 0),
-      "overlay-padding": 6,
+// Los colores base (fondo del nodo por tipo, halo de severidad) son
+// semánticos y se mantienen fijos entre temas; los que dependen del
+// fondo del lienzo (texto, borde, aristas) se leen de las custom
+// properties de CSS para que el grafo seepa qué tema está activo —
+// Cytoscape no hereda CSS, así que esto se recalcula al reconstruir el
+// grafo (ver el efecto más abajo, que incluye `theme` en sus deps).
+function buildStyle() {
+  const label = cssVar("--graph-label", "#cbd5e1");
+  const nodeBorder = cssVar("--graph-node-border", "#0f172a");
+  const edgeColor = cssVar("--graph-edge", "#334155");
+  const accent = cssVar("--accent", "#38bdf8");
+
+  return [
+    {
+      selector: "node",
+      style: {
+        "background-color": (ele) => colorForType(ele.data("deviceType")),
+        label: "data(label)",
+        "font-size": 9,
+        color: label,
+        "text-valign": "bottom",
+        "text-margin-y": 6,
+        "text-outline-width": 0,
+        width: 28,
+        height: 28,
+        "border-width": (ele) => (ele.data("isAuthorized") === false ? 3 : 2),
+        "border-color": (ele) => (ele.data("isAuthorized") === false ? "#ef4444" : nodeBorder),
+        "border-style": (ele) => (ele.data("isAuthorized") === false ? "dashed" : "solid"),
+        // Halo de alerta de seguridad (integración con NetGuardian): un
+        // anillo de color alrededor del nodo, sin ocultar su color de tipo.
+        "overlay-color": (ele) =>
+          SEVERITY_HALO_COLOR[ele.data("securityMaxSeverity")] || "transparent",
+        "overlay-opacity": (ele) => (SEVERITY_HALO_COLOR[ele.data("securityMaxSeverity")] ? 0.4 : 0),
+        "overlay-padding": 6,
+      },
     },
-  },
-  {
-    selector: "node:selected",
-    style: {
-      "border-width": 3,
-      "border-color": "#f8fafc",
+    {
+      selector: "node:selected",
+      style: {
+        "border-width": 3,
+        "border-color": accent,
+      },
     },
-  },
-  {
-    selector: "edge",
-    style: {
-      width: (ele) => Math.min(8, 1 + Math.log10(1 + (ele.data("bytesTotal") || 0))),
-      "line-color": "#334155",
-      "target-arrow-shape": "none",
-      "curve-style": "haystack",
-      opacity: 0.55,
+    {
+      selector: "edge",
+      style: {
+        width: (ele) => Math.min(8, 1 + Math.log10(1 + (ele.data("bytesTotal") || 0))),
+        "line-color": edgeColor,
+        "target-arrow-shape": "none",
+        "curve-style": "haystack",
+        opacity: 0.55,
+      },
     },
-  },
-];
+  ];
+}
 
 const NetworkGraph = forwardRef(function NetworkGraph(
-  { devices, relations, layoutName, onSelectDevice },
+  { devices, relations, layoutName, theme, onSelectDevice },
   ref
 ) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
 
   useImperativeHandle(ref, () => ({
-    exportPng: () => cyRef.current?.png({ full: true, scale: 2, bg: "#0f172a" }),
+    exportPng: () =>
+      cyRef.current?.png({ full: true, scale: 2, bg: cssVar("--graph-bg", "#0f172a") }),
     exportGraphml: () => {
       const cy = cyRef.current;
       if (!cy) return "";
@@ -146,7 +167,7 @@ const NetworkGraph = forwardRef(function NetworkGraph(
     const cy = cytoscape({
       container: containerRef.current,
       elements: buildElements(devices, relations),
-      style: STYLE,
+      style: buildStyle(),
       layout: {
         // animate:false a propósito: con animate:true, si React StrictMode
         // desmonta y remonta el componente en desarrollo mientras la
@@ -169,7 +190,7 @@ const NetworkGraph = forwardRef(function NetworkGraph(
     cyRef.current = cy;
     return () => cy.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devices, relations, layoutName]);
+  }, [devices, relations, layoutName, theme]);
 
   return <div ref={containerRef} className="graph-canvas" />;
 });

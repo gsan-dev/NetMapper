@@ -24,6 +24,8 @@ export default function FilterPanel({
   networks,
   subnetFilter,
   onSubnetChange,
+  searchQuery = "",
+  onSearchChange,
   layoutName,
   onLayoutChange,
   selectedDevice,
@@ -34,6 +36,16 @@ export default function FilterPanel({
   return (
     <section className="panel filter-panel">
       <h2>Filtros</h2>
+
+      <label className="field">
+        Buscar
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="MAC, IP, fabricante, tipo..."
+        />
+      </label>
 
       <label className="field">
         Red
